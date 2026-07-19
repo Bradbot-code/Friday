@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from typing import Any
 
 from openai import OpenAI
 
@@ -8,8 +10,15 @@ from brain.prompts import build_system_prompt
 from config.settings import Settings
 from memory.conversation_manager import ConversationManager
 from memory.memory_manager import MemoryManager, MemoryProposal
-from tools import tool_manager
-from tools.tool_manager import ToolManager
+from tools.tool_manager import ToolExecutionResult, ToolManager
+
+
+@dataclass
+class PendingToolCall:
+    name: str
+    arguments: dict[str, Any]
+    call_id: str
+    input_items: list[Any]
 
 class FridayAI:
     def __init__(
@@ -17,11 +26,13 @@ class FridayAI:
         settings: Settings,
         memory_manager: MemoryManager,
         conversation_manager: ConversationManager,
+        tool_manager: ToolManager,
     ) -> None:
         self.settings = settings
         self.memory_manager = memory_manager
         self.conversation_manager = conversation_manager
         self.tool_manager = tool_manager
+        self.pending_tool_call: PendingToolCall | None = None
 
         self.client = OpenAI(
             api_key=settings.openai_api_key,
@@ -44,6 +55,9 @@ class FridayAI:
         if not cleaned_message:
             return "You didn't give me anything to work with."
 
+        if self.pending_tool_call is not None:
+            return self._handle_pending_confirmation(cleaned_message)
+
         memory_context = self.memory_manager.retrieve_context(
             cleaned_message
         )
@@ -53,9 +67,8 @@ class FridayAI:
             memory_context=memory_context,
         )
 
-        api_conversation = self.conversation.copy()
-
-        api_conversation.append(
+        input_items: list[Any] = self.conversation.copy()
+        input_items.append(
             {
                 "role": "user",
                 "content": current_input,
@@ -63,44 +76,178 @@ class FridayAI:
         )
 
         try:
-            response = self.client.responses.create(
-                model=self.settings.openai_model,
-                instructions=self.system_prompt,
-                input=api_conversation,
-            )
-
-            answer = response.output_text.strip()
-
-            self.conversation.append(
-                {
-                    "role": "user",
-                    "content": cleaned_message,
-                }
-            )
-
-            self.conversation.append(
-                {
-                    "role": "assistant",
-                    "content": answer,
-                }
-            )
-
-            self.conversation_manager.add_message(
-                role="user",
-                content=cleaned_message,
-            )
-
-            self.conversation_manager.add_message(
-                role="assistant",
-                content=answer,
-            )
-
-            self._trim_conversation()
-
+            answer = self._run_tool_loop(input_items)
+            self._record_exchange(cleaned_message, answer)
             return answer
 
         except Exception as exc:
             return f"OpenAI request failed: {exc}"
+
+    def _run_tool_loop(
+        self,
+        input_items: list[Any],
+        max_rounds: int = 8,
+    ) -> str:
+        tools = self.tool_manager.get_openai_tools()
+
+        for _ in range(max_rounds):
+            response = self.client.responses.create(
+                model=self.settings.openai_model,
+                instructions=self.system_prompt,
+                input=input_items,
+                tools=tools,
+                parallel_tool_calls=False,
+            )
+
+            input_items.extend(response.output)
+            function_calls = [
+                item
+                for item in response.output
+                if item.type == "function_call"
+            ]
+
+            if not function_calls:
+                answer = response.output_text.strip()
+                return answer or "I completed the request but received no text response."
+
+            tool_call = function_calls[0]
+
+            try:
+                arguments = json.loads(tool_call.arguments)
+            except json.JSONDecodeError as exc:
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": tool_call.call_id,
+                        "output": json.dumps(
+                            {
+                                "success": False,
+                                "message": f"Invalid tool arguments: {exc}",
+                            }
+                        ),
+                    }
+                )
+                continue
+
+            registered_tool = self.tool_manager.get_tool(tool_call.name)
+
+            if registered_tool.requires_confirmation:
+                self.pending_tool_call = PendingToolCall(
+                    name=tool_call.name,
+                    arguments=arguments,
+                    call_id=tool_call.call_id,
+                    input_items=input_items.copy(),
+                )
+
+                return self._build_confirmation_prompt(
+                    tool_call.name,
+                    arguments,
+                )
+
+            result = self.tool_manager.execute(
+                tool_call.name,
+                arguments,
+            )
+            input_items.append(
+                self._tool_output(tool_call.call_id, result)
+            )
+
+        raise RuntimeError(
+            "Friday stopped after too many consecutive tool calls."
+        )
+
+    def _handle_pending_confirmation(
+        self,
+        user_message: str,
+    ) -> str:
+        normalized = user_message.casefold().strip().rstrip(".!")
+        yes_answers = {"yes", "y", "confirm", "confirmed", "approve", "approved"}
+        no_answers = {"no", "n", "deny", "denied", "cancel", "decline"}
+
+        if normalized not in yes_answers | no_answers:
+            return (
+                "A tool action is waiting for confirmation. "
+                "Please answer yes to run it or no to decline it."
+            )
+
+        pending = self.pending_tool_call
+        self.pending_tool_call = None
+        approved = normalized in yes_answers
+
+        if approved:
+            result = self.tool_manager.execute(
+                pending.name,
+                pending.arguments,
+                confirmed=True,
+            )
+        else:
+            result = ToolExecutionResult(
+                success=False,
+                tool_name=pending.name,
+                message="The user declined this tool action.",
+            )
+
+        input_items = pending.input_items
+        input_items.append(
+            self._tool_output(pending.call_id, result)
+        )
+
+        try:
+            answer = self._run_tool_loop(input_items)
+            self._record_exchange(user_message, answer)
+            return answer
+        except Exception as exc:
+            return f"OpenAI request failed: {exc}"
+
+    def _record_exchange(
+        self,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        for role, content in (
+            ("user", user_message),
+            ("assistant", assistant_message),
+        ):
+            self.conversation.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+            self.conversation_manager.add_message(
+                role=role,
+                content=content,
+            )
+
+        self._trim_conversation()
+
+    def _tool_output(
+        self,
+        call_id: str,
+        result: ToolExecutionResult,
+    ) -> dict[str, str]:
+        return {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": self.tool_manager.result_to_json(result),
+        }
+
+    @staticmethod
+    def _build_confirmation_prompt(
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        formatted_arguments = json.dumps(
+            arguments,
+            indent=2,
+            ensure_ascii=False,
+        )
+        return (
+            "This action changes your Obsidian vault and requires confirmation.\n\n"
+            f"Tool: {tool_name}\n"
+            f"Arguments:\n{formatted_arguments}\n\n"
+            "Run this action? Please answer yes or no."
+        )
 
     def generate_session_summary(self) -> str:
         transcript = self.conversation_manager.get_transcript()
