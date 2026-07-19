@@ -161,7 +161,9 @@ class ToolManager:
         if origin is dict:
             return {"type": "object"}
 
-        if origin in {Union, types.UnionType}:
+        union_type = getattr(types, "UnionType", None)
+
+        if origin is Union or origin is union_type:
             schemas = [
                 {"type": "null"}
                 if argument is type(None)
@@ -251,3 +253,4 @@ class ToolManager:
                 tool_name=name,
                 message=f"Tool failed: {exc}",
             )
+
