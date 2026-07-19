@@ -255,5 +255,3 @@ class ToolManager:
                 tool_name=name,
                 message=f"Tool failed: {exc}",
             )
-
-
