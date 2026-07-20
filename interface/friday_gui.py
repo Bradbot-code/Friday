@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import messagebox, scrolledtext, ttk
 
 from brain.ai import FridayAI
 from memory.conversation_manager import ConversationManager
@@ -36,6 +36,10 @@ class FridayGUI:
         self.conversation_manager = conversation_manager
 
         self.speak_replies_enabled = True
+        self.input_device_by_label: dict[str, int] = {}
+        self.output_device_by_label: dict[str, int] = {}
+        self.input_device_text = tk.StringVar(master=self.root)
+        self.output_device_text = tk.StringVar(master=self.root)
 
         self.voice_enabled = tk.BooleanVar(
             master=self.root,
@@ -67,12 +71,13 @@ class FridayGUI:
 
     def _configure_window(self) -> None:
         self.root.title("Friday")
-        self.root.geometry("1050x740")
+        self.root.geometry("1050x790")
         self.root.minsize(760, 560)
         self.root.configure(bg=self.BG)
 
     def _build_interface(self) -> None:
         self._build_header()
+        self._build_audio_controls()
         self._build_chat_display()
         self._build_input_panel()
         self._build_status_bar()
@@ -187,6 +192,204 @@ class FridayGUI:
         )
 
         voice_check.select()
+
+    def _build_audio_controls(self) -> None:
+        panel = tk.Frame(
+            self.root,
+            bg=self.PANEL,
+        )
+        panel.pack(
+            fill=tk.X,
+            padx=12,
+            pady=(0, 6),
+        )
+
+        tk.Label(
+            panel,
+            text="Microphone",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=0, padx=(12, 6), pady=10)
+
+        self.input_device_combo = ttk.Combobox(
+            panel,
+            textvariable=self.input_device_text,
+            state="readonly",
+            width=38,
+        )
+        self.input_device_combo.grid(
+            row=0,
+            column=1,
+            padx=(0, 14),
+            pady=10,
+            sticky="ew",
+        )
+        self.input_device_combo.bind(
+            "<<ComboboxSelected>>",
+            self._on_input_device_selected,
+        )
+
+        tk.Label(
+            panel,
+            text="Speakers",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=2, padx=(0, 6), pady=10)
+
+        self.output_device_combo = ttk.Combobox(
+            panel,
+            textvariable=self.output_device_text,
+            state="readonly",
+            width=38,
+        )
+        self.output_device_combo.grid(
+            row=0,
+            column=3,
+            padx=(0, 8),
+            pady=10,
+            sticky="ew",
+        )
+        self.output_device_combo.bind(
+            "<<ComboboxSelected>>",
+            self._on_output_device_selected,
+        )
+
+        refresh_button = self._make_button(
+            panel,
+            "Refresh",
+            self._refresh_audio_devices,
+        )
+        refresh_button.grid(row=0, column=4, padx=4, pady=8)
+
+        test_button = self._make_button(
+            panel,
+            "Test Output",
+            self._test_output_device,
+        )
+        test_button.grid(row=0, column=5, padx=(4, 12), pady=8)
+
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(3, weight=1)
+        self._refresh_audio_devices()
+
+    def _refresh_audio_devices(self) -> None:
+        try:
+            input_devices = self.voice_service.list_input_devices()
+            output_devices = self.voice_service.list_output_devices()
+        except Exception as exc:
+            messagebox.showerror("Audio Device Error", str(exc))
+            return
+
+        self.input_device_by_label = {
+            device.label: device.index
+            for device in input_devices
+        }
+        self.output_device_by_label = {
+            device.label: device.index
+            for device in output_devices
+        }
+
+        input_labels = list(self.input_device_by_label)
+        output_labels = list(self.output_device_by_label)
+        self.input_device_combo.configure(values=input_labels)
+        self.output_device_combo.configure(values=output_labels)
+
+        self._select_current_device(
+            input_labels,
+            self.input_device_by_label,
+            self.voice_service.input_device,
+            self.input_device_text,
+            self.voice_service.set_input_device,
+        )
+        self._select_current_device(
+            output_labels,
+            self.output_device_by_label,
+            self.voice_service.output_device,
+            self.output_device_text,
+            self.voice_service.set_output_device,
+        )
+
+        if not input_labels:
+            self.input_device_text.set("No input devices found")
+        if not output_labels:
+            self.output_device_text.set("No output devices found")
+
+    @staticmethod
+    def _select_current_device(
+        labels: list[str],
+        device_map: dict[str, int],
+        current_index: int | None,
+        target: tk.StringVar,
+        setter,
+    ) -> None:
+        selected = next(
+            (
+                label
+                for label, index in device_map.items()
+                if index == current_index
+            ),
+            labels[0] if labels else "",
+        )
+        target.set(selected)
+
+        if selected and current_index is None:
+            setter(device_map[selected])
+
+    def _on_input_device_selected(self, _event=None) -> None:
+        label = self.input_device_text.get()
+        device_index = self.input_device_by_label.get(label)
+
+        if device_index is None:
+            return
+
+        try:
+            self.voice_service.set_input_device(device_index)
+            self.status_text.set(f"Microphone selected: {label}")
+        except Exception as exc:
+            messagebox.showerror("Microphone Error", str(exc))
+            self._refresh_audio_devices()
+
+    def _on_output_device_selected(self, _event=None) -> None:
+        label = self.output_device_text.get()
+        device_index = self.output_device_by_label.get(label)
+
+        if device_index is None:
+            return
+
+        try:
+            self.voice_service.set_output_device(device_index)
+            self.status_text.set(f"Speakers selected: {label}")
+        except Exception as exc:
+            messagebox.showerror("Speaker Error", str(exc))
+            self._refresh_audio_devices()
+
+    def _test_output_device(self) -> None:
+        self.status_text.set("Testing selected output device...")
+        threading.Thread(
+            target=self._test_output_worker,
+            daemon=True,
+        ).start()
+
+    def _test_output_worker(self) -> None:
+        try:
+            self.voice_service.test_speaker()
+            self.root.after(
+                0,
+                lambda: self.status_text.set(
+                    "Output device test completed"
+                ),
+            )
+        except Exception as exc:
+            error = str(exc)
+            self.root.after(
+                0,
+                lambda: messagebox.showerror(
+                    "Speaker Test Error",
+                    error,
+                ),
+            )
 
     def _toggle_speak_replies(self) -> None:
         self.speak_replies_enabled = bool(
