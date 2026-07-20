@@ -45,4 +45,3 @@ class PreferenceStore:
             encoding="utf-8",
         )
         temporary_path.replace(self.path)
-
