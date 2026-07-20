@@ -122,6 +122,10 @@ class VoiceService:
                 "The selected device does not provide an audio output."
             )
 
+        sd.check_output_settings(
+            device=device_index,
+            channels=1,
+        )
         self._output_device = device_index
 
     def start_recording(self) -> None:
@@ -386,7 +390,12 @@ class VoiceService:
     def _default_device_index(position: int) -> int | None:
         try:
             defaults = sd.default.device
-            value = defaults[position] if isinstance(defaults, (list, tuple)) else defaults
+
+            try:
+                value = defaults[position]
+            except (IndexError, TypeError):
+                value = defaults
+
             index = int(value)
             return index if index >= 0 else None
         except (IndexError, TypeError, ValueError):
