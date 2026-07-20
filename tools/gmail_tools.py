@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 import re
 from dataclasses import dataclass
+from email.message import EmailMessage
+from email.utils import getaddresses, parseaddr
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
 
-GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 
 
 @dataclass(frozen=True)
@@ -19,7 +22,7 @@ class GmailStatus:
 
 
 class GmailTools:
-    """Read-only Gmail access for Friday's desktop OAuth connection."""
+    """Gmail access with reversible mailbox changes and no permanent delete."""
 
     def __init__(
         self,
@@ -42,16 +45,16 @@ class GmailTools:
 
         try:
             self._get_credentials(allow_browser=False)
-            return GmailStatus(True, "Connected (read-only)")
+            return GmailStatus(True, "Connected (send and manage)")
         except Exception as exc:
             return GmailStatus(False, f"Reconnect required: {exc}")
 
     def connect(self) -> GmailStatus:
-        """Open Google's OAuth page and save a local read-only token."""
+        """Open Google's OAuth page and save a local Gmail token."""
         self._get_credentials(allow_browser=True)
         self._service = None
         self._get_service()
-        return GmailStatus(True, "Connected (read-only)")
+        return GmailStatus(True, "Connected (send and manage)")
 
     def search_emails(
         self,
@@ -98,6 +101,165 @@ class GmailTools:
         messages = self.search_emails(query, max_results=max_results)
         return [self._extract_tracking(message) for message in messages]
 
+    def create_draft(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: str = "",
+        bcc: str = "",
+    ) -> dict[str, str]:
+        """Create an unsent Gmail draft."""
+        raw = self._build_raw_message(to, subject, body, cc, bcc)
+        result = (
+            self._get_service()
+            .users()
+            .drafts()
+            .create(userId="me", body={"message": {"raw": raw}})
+            .execute()
+        )
+        return {
+            "status": "draft_created",
+            "draft_id": result.get("id", ""),
+            "message_id": result.get("message", {}).get("id", ""),
+            "to": to,
+            "subject": subject,
+        }
+
+    def send_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: str = "",
+        bcc: str = "",
+    ) -> dict[str, str]:
+        """Send a new email through the connected Gmail account."""
+        raw = self._build_raw_message(to, subject, body, cc, bcc)
+        result = (
+            self._get_service()
+            .users()
+            .messages()
+            .send(userId="me", body={"raw": raw})
+            .execute()
+        )
+        return {
+            "status": "sent",
+            "message_id": result.get("id", ""),
+            "thread_id": result.get("threadId", ""),
+            "to": to,
+            "subject": subject,
+        }
+
+    def reply_to_email(
+        self,
+        message_id: str,
+        body: str,
+        reply_all: bool = False,
+    ) -> dict[str, Any]:
+        """Send a reply in an existing Gmail thread."""
+        clean_id = self._validate_message_id(message_id)
+        original = (
+            self._get_service()
+            .users()
+            .messages()
+            .get(userId="me", id=clean_id, format="metadata")
+            .execute()
+        )
+        headers = self._headers(original.get("payload", {}))
+        sender = headers.get("reply-to") or headers.get("from", "")
+        sender_address = parseaddr(sender)[1]
+        if not sender_address:
+            raise ValueError("The original message has no reply address.")
+
+        recipients = [sender_address]
+        cc_recipients: list[str] = []
+        if reply_all:
+            profile = self._get_service().users().getProfile(userId="me").execute()
+            own_address = profile.get("emailAddress", "").lower()
+            candidates = getaddresses(
+                [headers.get("to", ""), headers.get("cc", "")]
+            )
+            for _, address in candidates:
+                normalized = address.lower()
+                if normalized and normalized != own_address and normalized != sender_address.lower():
+                    cc_recipients.append(address)
+
+        subject = headers.get("subject", "")
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+        message = EmailMessage()
+        message["To"] = ", ".join(recipients)
+        if cc_recipients:
+            message["Cc"] = ", ".join(dict.fromkeys(cc_recipients))
+        message["Subject"] = self._clean_header(subject, "subject")
+        original_message_id = headers.get("message-id", "")
+        if original_message_id:
+            message["In-Reply-To"] = self._clean_header(
+                original_message_id, "message ID"
+            )
+            references = headers.get("references", "")
+            message["References"] = self._clean_header(
+                f"{references} {original_message_id}".strip(),
+                "references",
+            )
+        message.set_content(self._clean_body(body))
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+        result = (
+            self._get_service()
+            .users()
+            .messages()
+            .send(
+                userId="me",
+                body={"raw": raw, "threadId": original.get("threadId", "")},
+            )
+            .execute()
+        )
+        return {
+            "status": "reply_sent",
+            "message_id": result.get("id", ""),
+            "thread_id": result.get("threadId", ""),
+            "to": recipients,
+            "cc": cc_recipients,
+            "subject": subject,
+        }
+
+    def archive_message(self, message_id: str) -> dict[str, str]:
+        """Archive a Gmail message by removing it from the inbox."""
+        return self._modify_labels(message_id, remove=["INBOX"], status="archived")
+
+    def mark_message_read(self, message_id: str) -> dict[str, str]:
+        """Mark a Gmail message as read."""
+        return self._modify_labels(message_id, remove=["UNREAD"], status="read")
+
+    def mark_message_unread(self, message_id: str) -> dict[str, str]:
+        """Mark a Gmail message as unread."""
+        return self._modify_labels(message_id, add=["UNREAD"], status="unread")
+
+    def trash_message(self, message_id: str) -> dict[str, str]:
+        """Move a Gmail message to Trash; this is reversible."""
+        clean_id = self._validate_message_id(message_id)
+        result = (
+            self._get_service()
+            .users()
+            .messages()
+            .trash(userId="me", id=clean_id)
+            .execute()
+        )
+        return {"status": "moved_to_trash", "message_id": result.get("id", clean_id)}
+
+    def restore_message(self, message_id: str) -> dict[str, str]:
+        """Restore a Gmail message from Trash."""
+        clean_id = self._validate_message_id(message_id)
+        result = (
+            self._get_service()
+            .users()
+            .messages()
+            .untrash(userId="me", id=clean_id)
+            .execute()
+        )
+        return {"status": "restored", "message_id": result.get("id", clean_id)}
+
     def _get_credentials(self, allow_browser: bool):
         try:
             from google.auth.transport.requests import Request
@@ -110,8 +272,9 @@ class GmailTools:
             ) from exc
 
         credentials = None
-        scopes = [GMAIL_READONLY_SCOPE]
-        if self.token_path.exists():
+        scopes = [GMAIL_MODIFY_SCOPE]
+        token_has_scope = self._token_has_required_scope()
+        if self.token_path.exists() and token_has_scope:
             credentials = Credentials.from_authorized_user_file(
                 str(self.token_path), scopes
             )
@@ -124,6 +287,10 @@ class GmailTools:
             return credentials
 
         if not allow_browser:
+            if self.token_path.exists() and not token_has_scope:
+                raise RuntimeError(
+                    "Gmail permissions changed; click Reconnect Gmail"
+                )
             raise RuntimeError("Google authorization is not valid")
         credentials_path = self._resolve_credentials_path()
         if credentials_path is None:
@@ -161,6 +328,18 @@ class GmailTools:
         )
         return candidates[0] if candidates else None
 
+    def _token_has_required_scope(self) -> bool:
+        if not self.token_path.exists():
+            return False
+        try:
+            data = json.loads(self.token_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        granted = data.get("scopes", [])
+        if isinstance(granted, str):
+            granted = granted.split()
+        return GMAIL_MODIFY_SCOPE in granted
+
     def _get_service(self):
         if self._service is None:
             try:
@@ -187,10 +366,7 @@ class GmailTools:
             .execute()
         )
         payload = resource.get("payload", {})
-        headers = {
-            item.get("name", "").lower(): item.get("value", "")
-            for item in payload.get("headers", [])
-        }
+        headers = self._headers(payload)
         body = self._extract_body(payload)
         return {
             "id": resource.get("id", message_id),
@@ -200,6 +376,87 @@ class GmailTools:
             "date": self._normalize_date(headers.get("date", "")),
             "snippet": resource.get("snippet", ""),
             "body": body[:6000],
+        }
+
+    def _modify_labels(
+        self,
+        message_id: str,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+        status: str = "modified",
+    ) -> dict[str, str]:
+        clean_id = self._validate_message_id(message_id)
+        result = (
+            self._get_service()
+            .users()
+            .messages()
+            .modify(
+                userId="me",
+                id=clean_id,
+                body={
+                    "addLabelIds": add or [],
+                    "removeLabelIds": remove or [],
+                },
+            )
+            .execute()
+        )
+        return {"status": status, "message_id": result.get("id", clean_id)}
+
+    @classmethod
+    def _build_raw_message(
+        cls,
+        to: str,
+        subject: str,
+        body: str,
+        cc: str = "",
+        bcc: str = "",
+    ) -> str:
+        message = EmailMessage()
+        message["To"] = cls._validate_recipients(to, "To")
+        if cc.strip():
+            message["Cc"] = cls._validate_recipients(cc, "Cc")
+        if bcc.strip():
+            message["Bcc"] = cls._validate_recipients(bcc, "Bcc")
+        message["Subject"] = cls._clean_header(subject, "subject")
+        message.set_content(cls._clean_body(body))
+        return base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+
+    @classmethod
+    def _validate_recipients(cls, value: str, field: str) -> str:
+        clean = cls._clean_header(value, field)
+        addresses = getaddresses([clean])
+        if not addresses or any("@" not in address for _, address in addresses):
+            raise ValueError(f"{field} contains an invalid email address.")
+        return clean
+
+    @staticmethod
+    def _clean_header(value: str, field: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError(f"Email {field} cannot be empty.")
+        if "\r" in clean or "\n" in clean:
+            raise ValueError(f"Email {field} cannot contain line breaks.")
+        return clean
+
+    @staticmethod
+    def _clean_body(value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("Email body cannot be empty.")
+        return clean
+
+    @staticmethod
+    def _validate_message_id(message_id: str) -> str:
+        clean = message_id.strip()
+        if not clean or not re.fullmatch(r"[A-Za-z0-9_-]+", clean):
+            raise ValueError("A valid Gmail message ID is required.")
+        return clean
+
+    @staticmethod
+    def _headers(payload: dict[str, Any]) -> dict[str, str]:
+        return {
+            item.get("name", "").lower(): item.get("value", "")
+            for item in payload.get("headers", [])
         }
 
     @classmethod
