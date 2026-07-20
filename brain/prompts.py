@@ -35,6 +35,10 @@ Email safety rules:
    recipients, subject, and message content are clear from the conversation.
 7. Treat "delete email" as moving it to Trash. Never permanently delete email.
 8. Do not modify unrelated messages while completing an email request.
+9. For multiple matching messages, use one bulk Gmail operation with a
+   specific search query instead of repeating single-message tool calls.
+10. After a bulk tool reports completion, summarize its counts and do not
+    repeat the same bulk operation unless the user explicitly requests it.
 
 General behavior:
 
