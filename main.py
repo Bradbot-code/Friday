@@ -12,6 +12,7 @@ from memory.obsidian import ObsidianVault
 from memory.semantic_search import SemanticMemorySearch
 from tools.voice import VoiceService
 from tools.friday_tools import build_tool_manager
+from tools.gmail_tools import GmailTools
 from tools.obsidian_tools import ObsidianTools
 
 def build_friday() -> tuple[
@@ -19,6 +20,7 @@ def build_friday() -> tuple[
     VoiceService,
     MemoryManager,
     ConversationManager,
+    GmailTools,
 ]:
     settings = load_settings()
 
@@ -34,8 +36,11 @@ def build_friday() -> tuple[
         vault_path=settings.obsidian_vault_path
     )
 
+    gmail_tools = GmailTools()
+
     tool_manager = build_tool_manager(
-        obsidian_tools=obsidian_tools
+        obsidian_tools=obsidian_tools,
+        gmail_tools=gmail_tools,
     )
 
     semantic_search = SemanticMemorySearch(
@@ -71,6 +76,7 @@ def build_friday() -> tuple[
         voice_service,
         memory_manager,
         conversation_manager,
+        gmail_tools,
     )
 
 
@@ -81,6 +87,7 @@ def main() -> None:
             voice_service,
             memory_manager,
             conversation_manager,
+            gmail_tools,
         ) = build_friday()
 
     except Exception as exc:
@@ -95,6 +102,7 @@ def main() -> None:
         voice_service=voice_service,
         memory_manager=memory_manager,
         conversation_manager=conversation_manager,
+        gmail_tools=gmail_tools,
     )
 
     root.mainloop()
