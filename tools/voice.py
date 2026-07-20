@@ -29,6 +29,21 @@ class VoiceService:
     SAMPLE_RATE = 16_000
     CHANNELS = 1
     SAMPLE_WIDTH = 2
+    SUPPORTED_VOICES = (
+        "alloy",
+        "ash",
+        "ballad",
+        "coral",
+        "echo",
+        "fable",
+        "nova",
+        "onyx",
+        "sage",
+        "shimmer",
+        "verse",
+        "marin",
+        "cedar",
+    )
 
     def __init__(self, client: OpenAI) -> None:
         self.client = client
@@ -73,6 +88,23 @@ class VoiceService:
     @property
     def is_speaking(self) -> bool:
         return self._is_speaking
+
+    @property
+    def available_voices(self) -> tuple[str, ...]:
+        return self.SUPPORTED_VOICES
+
+    def set_voice(self, voice: str) -> None:
+        clean_voice = voice.casefold().strip()
+
+        if clean_voice not in self.SUPPORTED_VOICES:
+            raise ValueError(f"Unsupported Friday voice: {voice}")
+
+        if self._is_speaking:
+            raise RuntimeError(
+                "Stop playback before changing Friday's voice."
+            )
+
+        self.voice = clean_voice
 
     @property
     def input_device(self) -> int | None:
