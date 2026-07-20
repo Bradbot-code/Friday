@@ -5,7 +5,9 @@ import tempfile
 import threading
 import time
 import wave
+from collections import deque
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -73,6 +75,8 @@ class VoiceService:
         self._recording_lock = threading.Lock()
         self._is_recording = False
         self._is_speaking = False
+        self._microphone_level = 0.0
+        self._diagnostic_messages: deque[str] = deque(maxlen=200)
         self._input_device = self._default_device_index(0)
         self._output_device = self._default_device_index(1)
 
@@ -86,6 +90,12 @@ class VoiceService:
             exist_ok=True,
         )
 
+        self.log_diagnostic(
+            "Voice service initialized with "
+            f"input={self._input_device}, output={self._output_device}, "
+            f"voice={self.voice}."
+        )
+
     @property
     def is_recording(self) -> bool:
         return self._is_recording
@@ -93,6 +103,19 @@ class VoiceService:
     @property
     def is_speaking(self) -> bool:
         return self._is_speaking
+
+    @property
+    def microphone_level(self) -> float:
+        return self._microphone_level
+
+    def get_diagnostic_messages(self) -> list[str]:
+        return list(self._diagnostic_messages)
+
+    def log_diagnostic(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._diagnostic_messages.append(
+            f"[{timestamp}] {message.strip()}"
+        )
 
     @property
     def available_voices(self) -> tuple[str, ...]:
@@ -110,6 +133,9 @@ class VoiceService:
             )
 
         self.voice = clean_voice
+        self.log_diagnostic(
+            f"TTS voice changed to {clean_voice}."
+        )
 
     @property
     def input_device(self) -> int | None:
@@ -145,6 +171,9 @@ class VoiceService:
             dtype="int16",
         )
         self._input_device = device_index
+        self.log_diagnostic(
+            f"Input device changed to [{device_index}] {device['name']}."
+        )
 
     def set_output_device(self, device_index: int) -> None:
         if self._is_speaking:
@@ -164,6 +193,9 @@ class VoiceService:
             channels=1,
         )
         self._output_device = device_index
+        self.log_diagnostic(
+            f"Output device changed to [{device_index}] {device['name']}."
+        )
 
     def start_recording(self) -> None:
         if self._is_recording:
@@ -186,6 +218,9 @@ class VoiceService:
             )
 
             self._stream.start()
+            self.log_diagnostic(
+                f"Recording started on input device {self._input_device}."
+            )
 
         except Exception:
             self._is_recording = False
@@ -202,6 +237,8 @@ class VoiceService:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+
+        self.log_diagnostic("Recording stopped; starting transcription.")
 
         audio_path = self._save_recording()
 
@@ -270,6 +307,28 @@ class VoiceService:
 
         self._is_speaking = False
 
+    def test_microphone(self, duration: float = 0.75) -> float:
+        if self._is_recording:
+            raise RuntimeError(
+                "Stop recording before testing the microphone."
+            )
+
+        sample_count = int(self.SAMPLE_RATE * duration)
+        audio = sd.rec(
+            sample_count,
+            samplerate=self.SAMPLE_RATE,
+            channels=self.CHANNELS,
+            dtype="float32",
+            device=self._input_device,
+        )
+        sd.wait()
+        level = self._calculate_level(audio, full_scale=1.0)
+        self._microphone_level = level
+        self.log_diagnostic(
+            f"Microphone test completed at {level:.0%} peak level."
+        )
+        return level
+
     def test_speaker(self) -> None:
         """
         Plays a short locally generated tone.
@@ -316,7 +375,9 @@ class VoiceService:
         self._is_speaking = True
 
         try:
-            print("Friday: generating speech...")
+            self.log_diagnostic(
+                f"Generating speech with voice {self.voice}."
+            )
 
             with (
                 self.client.audio.speech
@@ -342,9 +403,8 @@ class VoiceService:
 
             file_size = output_path.stat().st_size
 
-            print(
-                "Friday: speech file created at "
-                f"{output_path} ({file_size} bytes)"
+            self.log_diagnostic(
+                f"Speech file created ({file_size} bytes)."
             )
 
             if file_size < 100:
@@ -355,9 +415,9 @@ class VoiceService:
             self._play_wav(output_path)
 
         except Exception as exc:
-            print()
-            print(f"Friday voice playback failed: {exc}")
-            print()
+            self.log_diagnostic(
+                f"Voice playback failed: {exc}"
+            )
 
         finally:
             self._is_speaking = False
@@ -410,9 +470,8 @@ class VoiceService:
                 channels,
             )
 
-        print(
-            "Friday: playing audio through "
-            f"device {self._output_device}"
+        self.log_diagnostic(
+            f"Playing audio through device {self._output_device}."
         )
 
         sd.play(
@@ -472,15 +531,33 @@ class VoiceService:
         status,
     ) -> None:
         if status:
-            print(f"Microphone status: {status}")
+            self.log_diagnostic(f"Microphone status: {status}")
 
         if not self._is_recording:
             return
+
+        self._microphone_level = self._calculate_level(
+            input_data,
+            full_scale=32768.0,
+        )
 
         with self._recording_lock:
             self._recorded_chunks.append(
                 input_data.copy()
             )
+
+    @staticmethod
+    def _calculate_level(
+        audio_data: np.ndarray,
+        full_scale: float,
+    ) -> float:
+        if audio_data.size == 0:
+            return 0.0
+
+        peak = float(
+            np.max(np.abs(audio_data.astype(np.float32)))
+        )
+        return max(0.0, min(1.0, peak / full_scale))
 
     def _save_recording(self) -> Path | None:
         with self._recording_lock:
@@ -520,3 +597,4 @@ class VoiceService:
             )
 
         return output_path
+
