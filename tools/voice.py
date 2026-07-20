@@ -597,4 +597,3 @@ class VoiceService:
             )
 
         return output_path
-
