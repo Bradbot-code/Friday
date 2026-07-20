@@ -41,6 +41,75 @@ def build_tool_manager(
     )
 
     manager.register(
+        name="gmail_create_draft",
+        description=(
+            "Create an unsent Gmail draft with To, subject, body, and optional "
+            "Cc or Bcc fields when the user explicitly requests a draft."
+        ),
+        function=gmail_tools.create_draft,
+        requires_confirmation=True,
+    )
+
+    manager.register(
+        name="gmail_send_email",
+        description=(
+            "Send a new email only when the user explicitly requests sending "
+            "and the recipients, subject, and body are clear."
+        ),
+        function=gmail_tools.send_email,
+        requires_confirmation=True,
+    )
+
+    manager.register(
+        name="gmail_reply_to_email",
+        description=(
+            "Reply to a Gmail message by its message ID, optionally replying "
+            "to all. Use only when the user explicitly requests the reply and "
+            "the reply content is clear."
+        ),
+        function=gmail_tools.reply_to_email,
+        requires_confirmation=True,
+    )
+
+    manager.register(
+        name="gmail_archive_message",
+        description="Archive a Gmail message by removing it from the inbox.",
+        function=gmail_tools.archive_message,
+        requires_confirmation=True,
+    )
+
+    manager.register(
+        name="gmail_mark_message_read",
+        description="Mark one Gmail message as read using its message ID.",
+        function=gmail_tools.mark_message_read,
+        requires_confirmation=True,
+    )
+
+    manager.register(
+        name="gmail_mark_message_unread",
+        description="Mark one Gmail message as unread using its message ID.",
+        function=gmail_tools.mark_message_unread,
+        requires_confirmation=True,
+    )
+
+    manager.register(
+        name="gmail_trash_message",
+        description=(
+            "Move one Gmail message to Trash using its message ID. This is "
+            "reversible and never permanently deletes the message."
+        ),
+        function=gmail_tools.trash_message,
+        requires_confirmation=True,
+    )
+
+    manager.register(
+        name="gmail_restore_message",
+        description="Restore one Gmail message from Trash.",
+        function=gmail_tools.restore_message,
+        requires_confirmation=True,
+    )
+
+    manager.register(
         name="obsidian_list_notes",
         description=(
             "List Markdown notes inside the Obsidian vault "
