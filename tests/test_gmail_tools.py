@@ -43,6 +43,16 @@ class _Messages:
             }
         )
 
+    def list(self, **kwargs):
+        self.calls.append(("list", kwargs))
+        return _Request(
+            {"messages": [{"id": "one"}, {"id": "two"}, {"id": "three"}]}
+        )
+
+    def batchModify(self, **kwargs):
+        self.calls.append(("batchModify", kwargs))
+        return _Request({})
+
     def modify(self, **kwargs):
         self.calls.append(("modify", kwargs))
         return _Request({"id": kwargs["id"]})
@@ -140,6 +150,41 @@ class GmailModificationTests(unittest.TestCase):
         self.assertEqual(result["thread_id"], "thread1")
         send_call = self.service.user_resource.message_resource.calls[-1]
         self.assertEqual(send_call[1]["body"]["threadId"], "thread1")
+
+    def test_bulk_archive_uses_one_batch_request(self):
+        result = self.gmail.bulk_manage_emails(
+            "category:promotions older_than:30d",
+            "archive",
+        )
+        self.assertEqual(result["changed_count"], 3)
+        calls = self.service.user_resource.message_resource.calls
+        batch_calls = [call for call in calls if call[0] == "batchModify"]
+        self.assertEqual(len(batch_calls), 1)
+        self.assertEqual(
+            batch_calls[0][1]["body"]["removeLabelIds"], ["INBOX"]
+        )
+
+    def test_bulk_trash_reports_all_changed_messages(self):
+        result = self.gmail.bulk_manage_emails(
+            "from:newsletter@example.com",
+            "trash",
+            max_messages=10,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["changed_count"], 3)
+        calls = self.service.user_resource.message_resource.calls
+        self.assertEqual(len([call for call in calls if call[0] == "trash"]), 3)
+
+    def test_bulk_restore_searches_trash(self):
+        self.gmail.bulk_manage_emails("in:trash from:example.com", "restore")
+        list_call = self.service.user_resource.message_resource.calls[0]
+        self.assertTrue(list_call[1]["includeSpamTrash"])
+
+    def test_bulk_action_rejects_unknown_or_broad_input(self):
+        with self.assertRaises(ValueError):
+            self.gmail.bulk_manage_emails("x", "archive")
+        with self.assertRaises(ValueError):
+            self.gmail.bulk_manage_emails("from:example.com", "permanent_delete")
 
     def test_old_readonly_token_requires_reauthorization(self):
         with tempfile.TemporaryDirectory() as folder:
