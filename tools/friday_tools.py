@@ -110,6 +110,19 @@ def build_tool_manager(
     )
 
     manager.register(
+        name="gmail_bulk_manage_emails",
+        description=(
+            "Apply one reversible action to up to 100 Gmail messages matching "
+            "a specific Gmail search query in a single operation. Allowed "
+            "actions: archive, mark_read, mark_unread, trash, restore. Prefer "
+            "this tool over repeated single-message calls whenever the user "
+            "asks to change multiple messages. Delete means trash."
+        ),
+        function=gmail_tools.bulk_manage_emails,
+        requires_confirmation=True,
+    )
+
+    manager.register(
         name="obsidian_list_notes",
         description=(
             "List Markdown notes inside the Obsidian vault "
