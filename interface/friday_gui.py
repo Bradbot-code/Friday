@@ -10,6 +10,7 @@ from config.preferences import PreferenceStore, UserPreferences
 from memory.conversation_manager import ConversationManager
 from memory.memory_manager import MemoryManager
 from tools.voice import VoiceService
+from tools.gmail_tools import GmailTools
 
 
 class FridayGUI:
@@ -34,12 +35,14 @@ class FridayGUI:
         voice_service: VoiceService,
         memory_manager: MemoryManager,
         conversation_manager: ConversationManager,
+        gmail_tools: GmailTools,
     ) -> None:
         self.root = root
         self.friday = friday
         self.voice_service = voice_service
         self.memory_manager = memory_manager
         self.conversation_manager = conversation_manager
+        self.gmail_tools = gmail_tools
         self.preference_store = PreferenceStore(
             Path("data/friday_preferences.json")
         )
@@ -67,6 +70,10 @@ class FridayGUI:
         self.status_text = tk.StringVar(
             master=self.root,
             value="Friday is online",
+        )
+        self.gmail_status_text = tk.StringVar(
+            master=self.root,
+            value=self.gmail_tools.get_status().message,
         )
 
         self._configure_window()
@@ -449,17 +456,72 @@ class FridayGUI:
             column=0,
             columnspan=4,
             padx=18,
-            pady=(8, 18),
+            pady=(8, 10),
             sticky="w",
         )
 
+        gmail_panel = tk.Frame(
+            parent,
+            bg=self.PANEL_RAISED,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+        )
+        gmail_panel.grid(
+            row=6,
+            column=0,
+            columnspan=4,
+            padx=18,
+            pady=(6, 18),
+            sticky="ew",
+        )
+        gmail_panel.columnconfigure(1, weight=1)
+        tk.Label(
+            gmail_panel,
+            text="GMAIL LINK",
+            bg=self.PANEL_RAISED,
+            fg=self.ACCENT,
+            font=("Consolas", 10, "bold"),
+        ).grid(row=0, column=0, padx=(14, 12), pady=(12, 2), sticky="w")
+        tk.Label(
+            gmail_panel,
+            textvariable=self.gmail_status_text,
+            bg=self.PANEL_RAISED,
+            fg=self.MUTED,
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=1, padx=8, pady=(12, 2), sticky="w")
+        self.gmail_connect_button = self._make_button(
+            gmail_panel,
+            "Connect Gmail",
+            self._connect_gmail,
+        )
+        self.gmail_connect_button.grid(
+            row=0,
+            column=2,
+            rowspan=2,
+            padx=14,
+            pady=12,
+        )
+        tk.Label(
+            gmail_panel,
+            text=(
+                "Read-only access for inbox summaries, email search, and "
+                "shipment tracking. Friday cannot send or delete email."
+            ),
+            bg=self.PANEL_RAISED,
+            fg=self.MUTED,
+            font=("Segoe UI", 9),
+            wraplength=540,
+            justify=tk.LEFT,
+        ).grid(row=1, column=0, columnspan=2, padx=14, pady=(2, 12), sticky="w")
+
     def _build_diagnostics_tab(self, parent: tk.Frame) -> None:
         parent.columnconfigure(1, weight=1)
-        parent.rowconfigure(8, weight=1)
+        parent.rowconfigure(9, weight=1)
         self.diagnostic_values: dict[str, tk.StringVar] = {}
 
         diagnostic_rows = (
             ("OpenAI", "api"),
+            ("Gmail", "gmail"),
             ("Chat model", "model"),
             ("Obsidian vault", "vault"),
             ("Microphone", "input"),
@@ -503,7 +565,7 @@ class FridayGUI:
 
         meter_frame = tk.Frame(parent, bg=self.PANEL)
         meter_frame.grid(
-            row=7,
+            row=8,
             column=0,
             columnspan=2,
             padx=18,
@@ -527,7 +589,7 @@ class FridayGUI:
 
         log_frame = tk.Frame(parent, bg=self.PANEL)
         log_frame.grid(
-            row=8,
+            row=9,
             column=0,
             columnspan=2,
             padx=18,
@@ -560,7 +622,7 @@ class FridayGUI:
             self._refresh_diagnostics,
         )
         refresh.grid(
-            row=9,
+            row=10,
             column=0,
             columnspan=2,
             padx=18,
@@ -892,6 +954,48 @@ class FridayGUI:
                 ),
             )
 
+    def _connect_gmail(self) -> None:
+        self.gmail_status_text.set("Waiting for Google sign-in...")
+        self.gmail_connect_button.configure(state=tk.DISABLED)
+        self.status_text.set("Connecting Gmail in your browser...")
+        threading.Thread(
+            target=self._connect_gmail_worker,
+            daemon=True,
+        ).start()
+
+    def _connect_gmail_worker(self) -> None:
+        try:
+            status = self.gmail_tools.connect()
+            self.root.after(
+                0,
+                lambda: self._gmail_connection_finished(status.message),
+            )
+        except Exception as exc:
+            error = str(exc)
+            self.root.after(
+                0,
+                lambda: self._gmail_connection_failed(error),
+            )
+
+    def _gmail_connection_finished(self, message: str) -> None:
+        self.gmail_status_text.set(message)
+        self.gmail_connect_button.configure(
+            text="Reconnect Gmail",
+            state=tk.NORMAL,
+        )
+        self.status_text.set("Gmail connected with read-only access")
+        self.voice_service.log_diagnostic("Gmail connected (read-only)")
+        self._refresh_diagnostics()
+
+    def _gmail_connection_failed(self, error: str) -> None:
+        self.gmail_status_text.set("Connection failed")
+        self.gmail_connect_button.configure(state=tk.NORMAL)
+        self.status_text.set("Gmail connection failed")
+        self.voice_service.log_diagnostic(
+            f"Gmail connection failed: {error}"
+        )
+        messagebox.showerror("Gmail Connection Error", error)
+
     def _refresh_diagnostics(self) -> None:
         window = getattr(self, "settings_window", None)
 
@@ -900,8 +1004,15 @@ class FridayGUI:
 
         settings = self.friday.settings
         vault_path = self.memory_manager.vault.vault_path
+        gmail_status = self.gmail_tools.get_status()
+        self.gmail_status_text.set(gmail_status.message)
+        if hasattr(self, "gmail_connect_button"):
+            self.gmail_connect_button.configure(
+                text="Reconnect Gmail" if gmail_status.connected else "Connect Gmail"
+            )
         values = {
             "api": "Configured" if settings.openai_api_key else "Missing API key",
+            "gmail": gmail_status.message,
             "model": settings.openai_model,
             "vault": (
                 f"Ready: {vault_path}"
