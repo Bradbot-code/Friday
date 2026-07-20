@@ -504,8 +504,8 @@ class FridayGUI:
         tk.Label(
             gmail_panel,
             text=(
-                "Read-only access for inbox summaries, email search, and "
-                "shipment tracking. Friday cannot send or delete email."
+                "Search, summaries, sending, replies, and reversible mailbox "
+                "management. Delete always means move to Trash."
             ),
             bg=self.PANEL_RAISED,
             fg=self.MUTED,
@@ -983,8 +983,8 @@ class FridayGUI:
             text="Reconnect Gmail",
             state=tk.NORMAL,
         )
-        self.status_text.set("Gmail connected with read-only access")
-        self.voice_service.log_diagnostic("Gmail connected (read-only)")
+        self.status_text.set("Gmail connected with send and manage access")
+        self.voice_service.log_diagnostic("Gmail connected (send and manage)")
         self._refresh_diagnostics()
 
     def _gmail_connection_failed(self, error: str) -> None:
@@ -1799,7 +1799,9 @@ class FridayGUI:
                 "app session?\n\n"
                 "This batch approval covers creating, updating, moving, "
                 "renaming, merging, archiving, and deleting Obsidian "
-                "notes and folders, including approved memory saves.\n\n"
+                "notes and folders, including approved memory saves. It also "
+                "covers creating drafts, sending or replying to email, and "
+                "changing Gmail read, archive, or Trash state.\n\n"
                 "Friday will continue to run read-only actions either way. "
                 "Choose No to block all protected actions for this session."
             ),
