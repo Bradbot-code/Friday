@@ -1,13 +1,44 @@
 from __future__ import annotations
 
+from tools.gmail_tools import GmailTools
 from tools.obsidian_tools import ObsidianTools
 from tools.tool_manager import ToolManager
 
 
 def build_tool_manager(
     obsidian_tools: ObsidianTools,
+    gmail_tools: GmailTools,
 ) -> ToolManager:
     manager = ToolManager()
+
+    manager.register(
+        name="gmail_search_emails",
+        description=(
+            "Search the user's Gmail mailbox with Gmail search syntax and "
+            "read matching messages. Use only when the user asks about email."
+        ),
+        function=gmail_tools.search_emails,
+        requires_confirmation=False,
+    )
+
+    manager.register(
+        name="gmail_list_unread",
+        description=(
+            "Read recent unread inbox messages so they can be summarized."
+        ),
+        function=gmail_tools.list_unread,
+        requires_confirmation=False,
+    )
+
+    manager.register(
+        name="gmail_get_tracking_updates",
+        description=(
+            "Find recent shipment and delivery emails and extract carrier, "
+            "tracking-number, and tracking-link information."
+        ),
+        function=gmail_tools.get_tracking_updates,
+        requires_confirmation=False,
+    )
 
     manager.register(
         name="obsidian_list_notes",
