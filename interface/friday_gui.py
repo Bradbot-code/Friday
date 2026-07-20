@@ -1720,4 +1720,3 @@ class FridayGUI:
 
         finally:
             self.root.destroy()
-
