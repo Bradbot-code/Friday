@@ -260,6 +260,91 @@ class GmailTools:
         )
         return {"status": "restored", "message_id": result.get("id", clean_id)}
 
+    def bulk_manage_emails(
+        self,
+        query: str,
+        action: str,
+        max_messages: int = 50,
+    ) -> dict[str, Any]:
+        """Apply one reversible mailbox action to messages matching a query."""
+        clean_query = query.strip()
+        if len(clean_query) < 3:
+            raise ValueError("Use a specific Gmail search query for bulk actions.")
+
+        clean_action = action.strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "read": "mark_read",
+            "unread": "mark_unread",
+            "archive": "archive",
+            "trash": "trash",
+            "restore": "restore",
+            "untrash": "restore",
+            "mark_read": "mark_read",
+            "mark_unread": "mark_unread",
+        }
+        normalized_action = aliases.get(clean_action)
+        if normalized_action is None:
+            raise ValueError(
+                "Bulk action must be archive, mark_read, mark_unread, trash, "
+                "or restore."
+            )
+
+        limit = max(1, min(int(max_messages), 100))
+        message_ids = self._list_message_ids(
+            clean_query,
+            limit,
+            include_spam_trash=normalized_action == "restore",
+        )
+        if not message_ids:
+            return {
+                "status": "no_matches",
+                "action": normalized_action,
+                "query": clean_query,
+                "matched_count": 0,
+                "changed_count": 0,
+                "message_ids": [],
+            }
+
+        messages = self._get_service().users().messages()
+        failures: list[dict[str, str]] = []
+        if normalized_action in {"archive", "mark_read", "mark_unread"}:
+            add_labels = ["UNREAD"] if normalized_action == "mark_unread" else []
+            remove_labels = []
+            if normalized_action == "archive":
+                remove_labels.append("INBOX")
+            elif normalized_action == "mark_read":
+                remove_labels.append("UNREAD")
+            messages.batchModify(
+                userId="me",
+                body={
+                    "ids": message_ids,
+                    "addLabelIds": add_labels,
+                    "removeLabelIds": remove_labels,
+                },
+            ).execute()
+        else:
+            operation = messages.trash if normalized_action == "trash" else messages.untrash
+            for message_id in message_ids:
+                try:
+                    operation(userId="me", id=message_id).execute()
+                except Exception as exc:
+                    failures.append(
+                        {"message_id": message_id, "error": str(exc)}
+                    )
+
+        changed_count = len(message_ids) - len(failures)
+        return {
+            "status": "completed" if not failures else "partially_completed",
+            "action": normalized_action,
+            "query": clean_query,
+            "matched_count": len(message_ids),
+            "changed_count": changed_count,
+            "failed_count": len(failures),
+            "message_ids": message_ids,
+            "failures": failures,
+            "limit_reached": len(message_ids) == limit,
+        }
+
     def _get_credentials(self, allow_browser: bool):
         try:
             from google.auth.transport.requests import Request
@@ -377,6 +462,30 @@ class GmailTools:
             "snippet": resource.get("snippet", ""),
             "body": body[:6000],
         }
+
+    def _list_message_ids(
+        self,
+        query: str,
+        max_results: int,
+        include_spam_trash: bool = False,
+    ) -> list[str]:
+        response = (
+            self._get_service()
+            .users()
+            .messages()
+            .list(
+                userId="me",
+                q=query,
+                maxResults=max_results,
+                includeSpamTrash=include_spam_trash,
+            )
+            .execute()
+        )
+        return [
+            item["id"]
+            for item in response.get("messages", [])
+            if item.get("id")
+        ]
 
     def _modify_labels(
         self,
