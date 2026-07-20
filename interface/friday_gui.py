@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, scrolledtext, ttk
 
 from brain.ai import FridayAI
+from config.preferences import PreferenceStore, UserPreferences
 from memory.conversation_manager import ConversationManager
 from memory.memory_manager import MemoryManager
 from tools.voice import VoiceService
@@ -34,8 +36,17 @@ class FridayGUI:
         self.voice_service = voice_service
         self.memory_manager = memory_manager
         self.conversation_manager = conversation_manager
+        self.preference_store = PreferenceStore(
+            Path("data/friday_preferences.json")
+        )
+        self.preferences = self.preference_store.load()
 
-        self.speak_replies_enabled = True
+        try:
+            self.voice_service.set_voice(self.preferences.voice)
+        except ValueError:
+            self.preferences.voice = self.voice_service.voice
+
+        self.speak_replies_enabled = self.preferences.speak_replies
         self.input_device_by_label: dict[str, int] = {}
         self.output_device_by_label: dict[str, int] = {}
         self.input_device_text = tk.StringVar(master=self.root)
@@ -47,7 +58,7 @@ class FridayGUI:
 
         self.voice_enabled = tk.BooleanVar(
             master=self.root,
-            value=True,
+            value=self.preferences.speak_replies,
         )
         self.status_text = tk.StringVar(
             master=self.root,
@@ -66,6 +77,11 @@ class FridayGUI:
         self.root.after(
             250,
             self._request_batch_action_approval,
+        )
+
+        self.root.after(
+            500,
+            self._update_diagnostics_loop,
         )
 
         self.root.protocol(
@@ -141,6 +157,17 @@ class FridayGUI:
             pady=16,
         )
 
+        settings_button = self._make_button(
+            header,
+            "Settings",
+            self._open_settings_panel,
+        )
+        settings_button.pack(
+            side=tk.RIGHT,
+            padx=4,
+            pady=16,
+        )
+
         save_button = self._make_button(
             header,
             "Save",
@@ -195,7 +222,272 @@ class FridayGUI:
             padx=12,
         )
 
-        voice_check.select()
+    def _open_settings_panel(self) -> None:
+        existing = getattr(self, "settings_window", None)
+
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            existing.focus_force()
+            return
+
+        self.settings_window = tk.Toplevel(self.root)
+        self.settings_window.title("Friday Settings and Diagnostics")
+        self.settings_window.geometry("820x640")
+        self.settings_window.minsize(700, 520)
+        self.settings_window.configure(bg=self.BG)
+
+        notebook = ttk.Notebook(self.settings_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        settings_tab = tk.Frame(notebook, bg=self.PANEL)
+        diagnostics_tab = tk.Frame(notebook, bg=self.PANEL)
+        notebook.add(settings_tab, text="Settings")
+        notebook.add(diagnostics_tab, text="Diagnostics")
+
+        self._build_settings_tab(settings_tab)
+        self._build_diagnostics_tab(diagnostics_tab)
+        self._refresh_audio_devices()
+        self._refresh_diagnostics()
+
+    def _build_settings_tab(self, parent: tk.Frame) -> None:
+        parent.columnconfigure(1, weight=1)
+
+        rows = (
+            ("Microphone", self.input_device_text),
+            ("Speakers", self.output_device_text),
+            ("Friday voice", self.voice_text),
+        )
+
+        for row, (label_text, variable) in enumerate(rows):
+            tk.Label(
+                parent,
+                text=label_text,
+                bg=self.PANEL,
+                fg=self.TEXT,
+                font=("Segoe UI", 10, "bold"),
+            ).grid(
+                row=row,
+                column=0,
+                padx=(18, 10),
+                pady=(18 if row == 0 else 8, 8),
+                sticky="w",
+            )
+
+            values = (
+                list(self.input_device_by_label)
+                if row == 0
+                else list(self.output_device_by_label)
+                if row == 1
+                else [
+                    voice.title()
+                    for voice in self.voice_service.available_voices
+                ]
+            )
+            combo = ttk.Combobox(
+                parent,
+                textvariable=variable,
+                values=values,
+                state="readonly",
+                width=58,
+            )
+            combo.grid(
+                row=row,
+                column=1,
+                columnspan=3,
+                padx=(0, 18),
+                pady=(18 if row == 0 else 8, 8),
+                sticky="ew",
+            )
+
+            if row == 0:
+                self.settings_input_combo = combo
+                combo.bind(
+                    "<<ComboboxSelected>>",
+                    self._on_input_device_selected,
+                )
+            elif row == 1:
+                self.settings_output_combo = combo
+                combo.bind(
+                    "<<ComboboxSelected>>",
+                    self._on_output_device_selected,
+                )
+            else:
+                combo.bind(
+                    "<<ComboboxSelected>>",
+                    self._on_voice_selected,
+                )
+
+        tk.Checkbutton(
+            parent,
+            text="Speak Friday's replies",
+            variable=self.voice_enabled,
+            command=self._toggle_speak_replies,
+            bg=self.PANEL,
+            fg=self.TEXT,
+            activebackground=self.PANEL,
+            activeforeground=self.TEXT,
+            selectcolor=self.INPUT_BG,
+            font=("Segoe UI", 10),
+        ).grid(
+            row=3,
+            column=1,
+            padx=(0, 18),
+            pady=12,
+            sticky="w",
+        )
+
+        controls = tk.Frame(parent, bg=self.PANEL)
+        controls.grid(
+            row=4,
+            column=0,
+            columnspan=4,
+            padx=18,
+            pady=16,
+            sticky="w",
+        )
+
+        for text, command in (
+            ("Refresh Devices", self._refresh_audio_devices),
+            ("Test Microphone", self._test_microphone),
+            ("Test Output", self._test_output_device),
+            ("Test Voice", self._test_voice),
+        ):
+            button = self._make_button(controls, text, command)
+            button.pack(side=tk.LEFT, padx=(0, 8))
+
+        tk.Label(
+            parent,
+            text=(
+                "These choices are saved locally for the next startup. "
+                "Batch action approval is intentionally not remembered."
+            ),
+            bg=self.PANEL,
+            fg=self.MUTED,
+            wraplength=700,
+            justify=tk.LEFT,
+            font=("Segoe UI", 9),
+        ).grid(
+            row=5,
+            column=0,
+            columnspan=4,
+            padx=18,
+            pady=(8, 18),
+            sticky="w",
+        )
+
+    def _build_diagnostics_tab(self, parent: tk.Frame) -> None:
+        parent.columnconfigure(1, weight=1)
+        parent.rowconfigure(8, weight=1)
+        self.diagnostic_values: dict[str, tk.StringVar] = {}
+
+        diagnostic_rows = (
+            ("OpenAI", "api"),
+            ("Chat model", "model"),
+            ("Obsidian vault", "vault"),
+            ("Microphone", "input"),
+            ("Speakers", "output"),
+            ("TTS", "tts"),
+            ("Voice state", "state"),
+        )
+
+        for row, (label_text, key) in enumerate(diagnostic_rows):
+            tk.Label(
+                parent,
+                text=label_text,
+                bg=self.PANEL,
+                fg=self.TEXT,
+                font=("Segoe UI", 9, "bold"),
+            ).grid(
+                row=row,
+                column=0,
+                padx=(18, 10),
+                pady=(14 if row == 0 else 4, 4),
+                sticky="nw",
+            )
+            value = tk.StringVar(master=self.settings_window)
+            self.diagnostic_values[key] = value
+            tk.Label(
+                parent,
+                textvariable=value,
+                bg=self.PANEL,
+                fg=self.MUTED,
+                anchor=tk.W,
+                justify=tk.LEFT,
+                wraplength=610,
+                font=("Segoe UI", 9),
+            ).grid(
+                row=row,
+                column=1,
+                padx=(0, 18),
+                pady=(14 if row == 0 else 4, 4),
+                sticky="ew",
+            )
+
+        meter_frame = tk.Frame(parent, bg=self.PANEL)
+        meter_frame.grid(
+            row=7,
+            column=0,
+            columnspan=2,
+            padx=18,
+            pady=10,
+            sticky="ew",
+        )
+        tk.Label(
+            meter_frame,
+            text="Microphone level",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        self.microphone_meter = ttk.Progressbar(
+            meter_frame,
+            maximum=100,
+            mode="determinate",
+        )
+        self.microphone_meter.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        log_frame = tk.Frame(parent, bg=self.PANEL)
+        log_frame.grid(
+            row=8,
+            column=0,
+            columnspan=2,
+            padx=18,
+            pady=(0, 10),
+            sticky="nsew",
+        )
+        log_frame.rowconfigure(1, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+        tk.Label(
+            log_frame,
+            text="Recent diagnostics",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 5))
+        self.diagnostic_log = scrolledtext.ScrolledText(
+            log_frame,
+            height=10,
+            bg=self.INPUT_BG,
+            fg=self.TEXT,
+            insertbackground=self.TEXT,
+            font=("Consolas", 9),
+            state=tk.DISABLED,
+        )
+        self.diagnostic_log.grid(row=1, column=0, sticky="nsew")
+
+        refresh = self._make_button(
+            parent,
+            "Refresh Diagnostics",
+            self._refresh_diagnostics,
+        )
+        refresh.grid(
+            row=9,
+            column=0,
+            columnspan=2,
+            padx=18,
+            pady=(0, 14),
+            sticky="w",
+        )
 
     def _build_audio_controls(self) -> None:
         panel = tk.Frame(
@@ -345,12 +637,22 @@ class FridayGUI:
         self.input_device_combo.configure(values=input_labels)
         self.output_device_combo.configure(values=output_labels)
 
+        settings_window = getattr(self, "settings_window", None)
+        if (
+            settings_window is not None
+            and settings_window.winfo_exists()
+            and hasattr(self, "settings_input_combo")
+        ):
+            self.settings_input_combo.configure(values=input_labels)
+            self.settings_output_combo.configure(values=output_labels)
+
         self._select_current_device(
             input_labels,
             self.input_device_by_label,
             self.voice_service.input_device,
             self.input_device_text,
             self.voice_service.set_input_device,
+            self.preferences.input_device_label,
         )
         self._select_current_device(
             output_labels,
@@ -358,6 +660,7 @@ class FridayGUI:
             self.voice_service.output_device,
             self.output_device_text,
             self.voice_service.set_output_device,
+            self.preferences.output_device_label,
         )
 
         if not input_labels:
@@ -372,19 +675,37 @@ class FridayGUI:
         current_index: int | None,
         target: tk.StringVar,
         setter,
+        preferred_label: str,
     ) -> None:
-        selected = next(
+        preferred_match = next(
             (
                 label
-                for label, index in device_map.items()
-                if index == current_index
+                for label in labels
+                if FridayGUI._device_identity(label)
+                == FridayGUI._device_identity(preferred_label)
             ),
-            labels[0] if labels else "",
+            "",
+        )
+        selected = (
+            preferred_match
+            if preferred_match
+            else next(
+                (
+                    label
+                    for label, index in device_map.items()
+                    if index == current_index
+                ),
+                labels[0] if labels else "",
+            )
         )
         target.set(selected)
 
-        if selected and current_index is None:
+        if selected and device_map[selected] != current_index:
             setter(device_map[selected])
+
+    @staticmethod
+    def _device_identity(label: str) -> str:
+        return label.split("] ", 1)[-1].casefold().strip()
 
     def _on_input_device_selected(self, _event=None) -> None:
         label = self.input_device_text.get()
@@ -396,6 +717,7 @@ class FridayGUI:
         try:
             self.voice_service.set_input_device(device_index)
             self.status_text.set(f"Microphone selected: {label}")
+            self._save_preferences()
         except Exception as exc:
             messagebox.showerror("Microphone Error", str(exc))
             self._refresh_audio_devices()
@@ -410,6 +732,7 @@ class FridayGUI:
         try:
             self.voice_service.set_output_device(device_index)
             self.status_text.set(f"Speakers selected: {label}")
+            self._save_preferences()
         except Exception as exc:
             messagebox.showerror("Speaker Error", str(exc))
             self._refresh_audio_devices()
@@ -422,6 +745,7 @@ class FridayGUI:
             self.status_text.set(
                 f"Friday voice selected: {selected_voice.title()}"
             )
+            self._save_preferences()
         except Exception as exc:
             messagebox.showerror("Friday Voice Error", str(exc))
             self.voice_text.set(self.voice_service.voice.title())
@@ -444,6 +768,9 @@ class FridayGUI:
             )
         except Exception as exc:
             error = str(exc)
+            self.voice_service.log_diagnostic(
+                f"Speaker test failed: {error}"
+            )
             self.root.after(
                 0,
                 lambda: messagebox.showerror(
@@ -452,10 +779,109 @@ class FridayGUI:
                 ),
             )
 
+    def _test_microphone(self) -> None:
+        self.status_text.set("Testing selected microphone...")
+        threading.Thread(
+            target=self._test_microphone_worker,
+            daemon=True,
+        ).start()
+
+    def _test_microphone_worker(self) -> None:
+        try:
+            level = self.voice_service.test_microphone()
+            self.root.after(
+                0,
+                lambda: self.status_text.set(
+                    f"Microphone peak level: {level:.0%}"
+                ),
+            )
+        except Exception as exc:
+            error = str(exc)
+            self.voice_service.log_diagnostic(
+                f"Microphone test failed: {error}"
+            )
+            self.root.after(
+                0,
+                lambda: messagebox.showerror(
+                    "Microphone Test Error",
+                    error,
+                ),
+            )
+
+    def _refresh_diagnostics(self) -> None:
+        window = getattr(self, "settings_window", None)
+
+        if window is None or not window.winfo_exists():
+            return
+
+        settings = self.friday.settings
+        vault_path = self.memory_manager.vault.vault_path
+        values = {
+            "api": "Configured" if settings.openai_api_key else "Missing API key",
+            "model": settings.openai_model,
+            "vault": (
+                f"Ready: {vault_path}"
+                if vault_path.exists()
+                else f"Not found: {vault_path}"
+            ),
+            "input": self.input_device_text.get(),
+            "output": self.output_device_text.get(),
+            "tts": (
+                f"{self.voice_service.tts_model} / "
+                f"{self.voice_service.voice.title()}"
+            ),
+            "state": (
+                "Recording"
+                if self.voice_service.is_recording
+                else "Speaking"
+                if self.voice_service.is_speaking
+                else "Idle"
+            ),
+        }
+
+        for key, value in values.items():
+            self.diagnostic_values[key].set(value)
+
+        self.diagnostic_log.configure(state=tk.NORMAL)
+        self.diagnostic_log.delete("1.0", tk.END)
+        self.diagnostic_log.insert(
+            "1.0",
+            "\n".join(self.voice_service.get_diagnostic_messages()),
+        )
+        self.diagnostic_log.configure(state=tk.DISABLED)
+        self.diagnostic_log.see(tk.END)
+
+    def _update_diagnostics_loop(self) -> None:
+        window = getattr(self, "settings_window", None)
+
+        if window is not None and window.winfo_exists():
+            self.microphone_meter["value"] = (
+                self.voice_service.microphone_level * 100
+            )
+            self._refresh_diagnostics()
+
+        self.root.after(500, self._update_diagnostics_loop)
+
+    def _save_preferences(self) -> None:
+        self.preferences = UserPreferences(
+            voice=self.voice_service.voice,
+            input_device_label=self.input_device_text.get(),
+            output_device_label=self.output_device_text.get(),
+            speak_replies=bool(self.voice_enabled.get()),
+        )
+
+        try:
+            self.preference_store.save(self.preferences)
+        except OSError as exc:
+            self.voice_service.log_diagnostic(
+                f"Could not save preferences: {exc}"
+            )
+
     def _toggle_speak_replies(self) -> None:
         self.speak_replies_enabled = bool(
             self.voice_enabled.get()
         )
+        self._save_preferences()
 
         if self.speak_replies_enabled:
             self.status_text.set(
@@ -600,7 +1026,7 @@ class FridayGUI:
         status_bar = tk.Label(
             self.root,
             text=(
-                "Enter sends • Shift+Enter creates a new line • "
+                "Enter sends â€¢ Shift+Enter creates a new line â€¢ "
                 "Start Talking begins recording"
             ),
             bg=self.BG,
@@ -1107,6 +1533,9 @@ class FridayGUI:
         error: str,
     ) -> None:
         self.status_text.set("Reindex failed")
+        self.voice_service.log_diagnostic(
+            f"Obsidian reindex failed: {error}"
+        )
 
         messagebox.showerror(
             "Index Error",
@@ -1115,6 +1544,9 @@ class FridayGUI:
 
     def _show_error(self, error: str) -> None:
         self._set_busy(False)
+        self.voice_service.log_diagnostic(
+            f"Friday request failed: {error}"
+        )
         self.status_text.set(
             "Friday encountered an error"
         )
@@ -1125,8 +1557,8 @@ class FridayGUI:
         )
 
     def _initialize_voice_setting(self) -> None:
-        self.voice_enabled.set(True)
-        self.speak_replies_enabled = True
+        self.voice_enabled.set(self.preferences.speak_replies)
+        self.speak_replies_enabled = self.preferences.speak_replies
 
     def _request_batch_action_approval(self) -> None:
         approved = messagebox.askyesno(
@@ -1155,6 +1587,7 @@ class FridayGUI:
 
     def _on_close(self) -> None:
         try:
+            self._save_preferences()
             self.voice_service.stop_speaking()
 
             if self.voice_service.is_recording:
@@ -1167,3 +1600,4 @@ class FridayGUI:
 
         finally:
             self.root.destroy()
+
