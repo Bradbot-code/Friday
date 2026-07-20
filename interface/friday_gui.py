@@ -40,6 +40,10 @@ class FridayGUI:
         self.output_device_by_label: dict[str, int] = {}
         self.input_device_text = tk.StringVar(master=self.root)
         self.output_device_text = tk.StringVar(master=self.root)
+        self.voice_text = tk.StringVar(
+            master=self.root,
+            value=self.voice_service.voice.title(),
+        )
 
         self.voice_enabled = tk.BooleanVar(
             master=self.root,
@@ -270,6 +274,51 @@ class FridayGUI:
         )
         test_button.grid(row=0, column=5, padx=(4, 12), pady=8)
 
+        tk.Label(
+            panel,
+            text="Friday voice",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=1, column=0, padx=(12, 6), pady=(0, 10))
+
+        self.voice_combo = ttk.Combobox(
+            panel,
+            textvariable=self.voice_text,
+            values=[
+                voice.title()
+                for voice in self.voice_service.available_voices
+            ],
+            state="readonly",
+            width=20,
+        )
+        self.voice_combo.grid(
+            row=1,
+            column=1,
+            padx=(0, 14),
+            pady=(0, 10),
+            sticky="w",
+        )
+        self.voice_combo.bind(
+            "<<ComboboxSelected>>",
+            self._on_voice_selected,
+        )
+
+        tk.Label(
+            panel,
+            text="Choose a voice, then click Test Voice to preview it.",
+            bg=self.PANEL,
+            fg=self.MUTED,
+            font=("Segoe UI", 9),
+        ).grid(
+            row=1,
+            column=2,
+            columnspan=4,
+            padx=(0, 12),
+            pady=(0, 10),
+            sticky="w",
+        )
+
         panel.columnconfigure(1, weight=1)
         panel.columnconfigure(3, weight=1)
         self._refresh_audio_devices()
@@ -364,6 +413,18 @@ class FridayGUI:
         except Exception as exc:
             messagebox.showerror("Speaker Error", str(exc))
             self._refresh_audio_devices()
+
+    def _on_voice_selected(self, _event=None) -> None:
+        selected_voice = self.voice_text.get().casefold()
+
+        try:
+            self.voice_service.set_voice(selected_voice)
+            self.status_text.set(
+                f"Friday voice selected: {selected_voice.title()}"
+            )
+        except Exception as exc:
+            messagebox.showerror("Friday Voice Error", str(exc))
+            self.voice_text.set(self.voice_service.voice.title())
 
     def _test_output_device(self) -> None:
         self.status_text.set("Testing selected output device...")
