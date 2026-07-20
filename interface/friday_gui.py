@@ -55,6 +55,11 @@ class FridayGUI:
             self._initialize_voice_setting,
         )
 
+        self.root.after(
+            250,
+            self._request_batch_action_approval,
+        )
+
         self.root.protocol(
             "WM_DELETE_WINDOW",
             self._on_close,
@@ -536,19 +541,10 @@ class FridayGUI:
         self,
         proposal,
     ) -> None:
-        approved = messagebox.askyesno(
-            "Friday Memory",
-            (
-                "Friday found something that may be "
-                "worth remembering.\n\n"
-                f"Title:\n{proposal.title}\n\n"
-                f"Memory:\n{proposal.content}\n\n"
-                f"Reason:\n{proposal.reason}\n\n"
-                "Save this to Obsidian?"
-            ),
-        )
-
-        if not approved:
+        if not self.friday.batch_actions_approved:
+            self.status_text.set(
+                "Memory not saved: batch actions were not approved"
+            )
             return
 
         try:
@@ -867,6 +863,31 @@ class FridayGUI:
     def _initialize_voice_setting(self) -> None:
         self.voice_enabled.set(True)
         self.speak_replies_enabled = True
+
+    def _request_batch_action_approval(self) -> None:
+        approved = messagebox.askyesno(
+            "Friday Batch Approval",
+            (
+                "Allow Friday to perform protected actions for this "
+                "app session?\n\n"
+                "This batch approval covers creating, updating, moving, "
+                "renaming, merging, archiving, and deleting Obsidian "
+                "notes and folders, including approved memory saves.\n\n"
+                "Friday will continue to run read-only actions either way. "
+                "Choose No to block all protected actions for this session."
+            ),
+        )
+
+        self.friday.set_batch_actions_approved(approved)
+
+        if approved:
+            self.status_text.set(
+                "Batch actions approved for this session"
+            )
+        else:
+            self.status_text.set(
+                "Protected actions blocked for this session"
+            )
 
     def _on_close(self) -> None:
         try:
