@@ -13,15 +13,19 @@ from tools.voice import VoiceService
 
 
 class FridayGUI:
-    BG = "#101419"
-    PANEL = "#182028"
-    INPUT_BG = "#202A34"
-    TEXT = "#E8EEF3"
-    MUTED = "#8FA1B3"
-    ACCENT = "#59C7FF"
-    FRIDAY_ACCENT = "#BCA7FF"
-    BUTTON = "#263542"
-    RECORDING = "#A83232"
+    BG = "#050912"
+    PANEL = "#0B1322"
+    PANEL_RAISED = "#101C2E"
+    INPUT_BG = "#07101E"
+    BORDER = "#1D3551"
+    TEXT = "#EAF7FF"
+    MUTED = "#7890A8"
+    ACCENT = "#22D3EE"
+    ACCENT_BRIGHT = "#67E8F9"
+    FRIDAY_ACCENT = "#A78BFA"
+    SUCCESS = "#34D399"
+    BUTTON = "#14253A"
+    RECORDING = "#E5486D"
 
     def __init__(
         self,
@@ -90,10 +94,70 @@ class FridayGUI:
         )
 
     def _configure_window(self) -> None:
-        self.root.title("Friday")
-        self.root.geometry("1050x790")
-        self.root.minsize(760, 560)
+        self.root.title("F.R.I.D.A.Y. // AI Command Interface")
+        self.root.geometry("1180x820")
+        self.root.minsize(860, 620)
         self.root.configure(bg=self.BG)
+        self._configure_styles()
+
+    def _configure_styles(self) -> None:
+        """Give native ttk controls the same visual language as the app."""
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        style.configure(
+            "Friday.TCombobox",
+            fieldbackground=self.INPUT_BG,
+            background=self.BUTTON,
+            foreground=self.TEXT,
+            arrowcolor=self.ACCENT,
+            bordercolor=self.BORDER,
+            lightcolor=self.BORDER,
+            darkcolor=self.BORDER,
+            padding=7,
+        )
+        style.map(
+            "Friday.TCombobox",
+            fieldbackground=[("readonly", self.INPUT_BG)],
+            foreground=[("readonly", self.TEXT)],
+            selectbackground=[("readonly", self.INPUT_BG)],
+            selectforeground=[("readonly", self.TEXT)],
+        )
+        style.configure(
+            "Friday.TNotebook",
+            background=self.BG,
+            borderwidth=0,
+            tabmargins=(0, 0, 0, 0),
+        )
+        style.configure(
+            "Friday.TNotebook.Tab",
+            background=self.PANEL,
+            foreground=self.MUTED,
+            padding=(22, 11),
+            font=("Segoe UI Semibold", 10),
+            borderwidth=0,
+        )
+        style.map(
+            "Friday.TNotebook.Tab",
+            background=[("selected", self.PANEL_RAISED)],
+            foreground=[("selected", self.ACCENT)],
+        )
+        style.configure(
+            "Friday.Horizontal.TProgressbar",
+            troughcolor=self.INPUT_BG,
+            background=self.ACCENT,
+            bordercolor=self.BORDER,
+            lightcolor=self.ACCENT,
+            darkcolor=self.ACCENT,
+            thickness=8,
+        )
+        self.root.option_add("*TCombobox*Listbox.background", self.INPUT_BG)
+        self.root.option_add("*TCombobox*Listbox.foreground", self.TEXT)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", self.BUTTON)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", self.ACCENT)
 
     def _build_interface(self) -> None:
         self._build_header()
@@ -108,42 +172,52 @@ class FridayGUI:
         header = tk.Frame(
             self.root,
             bg=self.PANEL,
-            height=72,
+            height=92,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
         )
 
         header.pack(
             fill=tk.X,
-            padx=12,
-            pady=(12, 6),
+            padx=16,
+            pady=(16, 8),
         )
 
         header.pack_propagate(False)
 
-        title = tk.Label(
-            header,
-            text="FRIDAY",
-            bg=self.PANEL,
-            fg=self.ACCENT,
-            font=("Segoe UI", 21, "bold"),
+        core = tk.Canvas(
+            header, width=66, height=66, bg=self.PANEL,
+            highlightthickness=0,
         )
+        core.pack(side=tk.LEFT, padx=(15, 4))
+        core.create_oval(7, 7, 59, 59, outline=self.BORDER, width=2)
+        core.create_arc(
+            12, 12, 54, 54, start=25, extent=118,
+            outline=self.FRIDAY_ACCENT, width=3, style=tk.ARC,
+        )
+        core.create_arc(
+            12, 12, 54, 54, start=205, extent=118,
+            outline=self.ACCENT, width=3, style=tk.ARC,
+        )
+        core.create_oval(24, 24, 42, 42, fill=self.ACCENT, outline="")
+        core.create_oval(29, 29, 37, 37, fill="#DFFFFF", outline="")
 
-        title.pack(
-            side=tk.LEFT,
-            padx=(18, 14),
-        )
-
-        subtitle = tk.Label(
-            header,
-            textvariable=self.status_text,
-            bg=self.PANEL,
-            fg=self.MUTED,
-            font=("Segoe UI", 10),
-        )
-
-        subtitle.pack(
-            side=tk.LEFT,
-            padx=(0, 10),
-        )
+        identity = tk.Frame(header, bg=self.PANEL)
+        identity.pack(side=tk.LEFT, padx=(8, 18), pady=13)
+        tk.Label(
+            identity, text="F.R.I.D.A.Y.", bg=self.PANEL, fg=self.TEXT,
+            font=("Segoe UI Semibold", 22),
+        ).pack(anchor="w")
+        status_row = tk.Frame(identity, bg=self.PANEL)
+        status_row.pack(anchor="w")
+        tk.Label(
+            status_row, text="●", bg=self.PANEL, fg=self.SUCCESS,
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Label(
+            status_row, textvariable=self.status_text, bg=self.PANEL,
+            fg=self.MUTED, font=("Consolas", 9),
+        ).pack(side=tk.LEFT)
 
         new_button = self._make_button(
             header,
@@ -154,7 +228,7 @@ class FridayGUI:
         new_button.pack(
             side=tk.RIGHT,
             padx=(4, 12),
-            pady=16,
+            pady=25,
         )
 
         settings_button = self._make_button(
@@ -165,7 +239,7 @@ class FridayGUI:
         settings_button.pack(
             side=tk.RIGHT,
             padx=4,
-            pady=16,
+            pady=25,
         )
 
         save_button = self._make_button(
@@ -177,7 +251,7 @@ class FridayGUI:
         save_button.pack(
             side=tk.RIGHT,
             padx=4,
-            pady=16,
+            pady=25,
         )
 
         reindex_button = self._make_button(
@@ -189,7 +263,7 @@ class FridayGUI:
         reindex_button.pack(
             side=tk.RIGHT,
             padx=4,
-            pady=16,
+            pady=25,
         )
 
         test_voice_button = self._make_button(
@@ -201,7 +275,7 @@ class FridayGUI:
         test_voice_button.pack(
             side=tk.RIGHT,
             padx=4,
-            pady=16,
+            pady=25,
         )
 
         voice_check = tk.Checkbutton(
@@ -214,12 +288,12 @@ class FridayGUI:
             activebackground=self.PANEL,
             activeforeground=self.TEXT,
             selectcolor=self.INPUT_BG,
-            font=("Segoe UI", 10),
+            font=("Segoe UI Semibold", 9),
         )
 
         voice_check.pack(
             side=tk.RIGHT,
-            padx=12,
+            padx=10,
         )
 
     def _open_settings_panel(self) -> None:
@@ -236,7 +310,10 @@ class FridayGUI:
         self.settings_window.minsize(700, 520)
         self.settings_window.configure(bg=self.BG)
 
-        notebook = ttk.Notebook(self.settings_window)
+        notebook = ttk.Notebook(
+            self.settings_window,
+            style="Friday.TNotebook",
+        )
         notebook.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
         settings_tab = tk.Frame(notebook, bg=self.PANEL)
@@ -289,6 +366,7 @@ class FridayGUI:
                 values=values,
                 state="readonly",
                 width=58,
+                style="Friday.TCombobox",
             )
             combo.grid(
                 row=row,
@@ -443,6 +521,7 @@ class FridayGUI:
             meter_frame,
             maximum=100,
             mode="determinate",
+            style="Friday.Horizontal.TProgressbar",
         )
         self.microphone_meter.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -493,11 +572,13 @@ class FridayGUI:
         panel = tk.Frame(
             self.root,
             bg=self.PANEL,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
         )
         panel.pack(
             fill=tk.X,
-            padx=12,
-            pady=(0, 6),
+            padx=16,
+            pady=(0, 8),
         )
 
         tk.Label(
@@ -513,6 +594,7 @@ class FridayGUI:
             textvariable=self.input_device_text,
             state="readonly",
             width=38,
+            style="Friday.TCombobox",
         )
         self.input_device_combo.grid(
             row=0,
@@ -539,6 +621,7 @@ class FridayGUI:
             textvariable=self.output_device_text,
             state="readonly",
             width=38,
+            style="Friday.TCombobox",
         )
         self.output_device_combo.grid(
             row=0,
@@ -583,6 +666,7 @@ class FridayGUI:
             ],
             state="readonly",
             width=20,
+            style="Friday.TCombobox",
         )
         self.voice_combo.grid(
             row=1,
@@ -895,55 +979,85 @@ class FridayGUI:
             )
 
     def _build_chat_display(self) -> None:
-        self.chat_display = scrolledtext.ScrolledText(
+        chat_shell = tk.Frame(
             self.root,
+            bg=self.PANEL,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+        )
+        chat_shell.pack(fill=tk.BOTH, expand=True, padx=16, pady=8)
+
+        chat_header = tk.Frame(chat_shell, bg=self.PANEL_RAISED, height=36)
+        chat_header.pack(fill=tk.X)
+        chat_header.pack_propagate(False)
+        tk.Label(
+            chat_header, text="  ◈  NEURAL LINK / ACTIVE SESSION",
+            bg=self.PANEL_RAISED, fg=self.ACCENT,
+            font=("Consolas", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=10, pady=8)
+        tk.Label(
+            chat_header, text="ENCRYPTED  •  MEMORY ONLINE  ",
+            bg=self.PANEL_RAISED, fg=self.MUTED,
+            font=("Consolas", 8),
+        ).pack(side=tk.RIGHT, padx=10)
+
+        self.chat_display = scrolledtext.ScrolledText(
+            chat_shell,
             wrap=tk.WORD,
-            bg=self.BG,
+            bg=self.INPUT_BG,
             fg=self.TEXT,
             insertbackground=self.TEXT,
             selectbackground=self.ACCENT,
             relief=tk.FLAT,
             borderwidth=0,
             font=("Segoe UI", 11),
-            padx=18,
-            pady=18,
+            padx=24,
+            pady=20,
             state=tk.DISABLED,
         )
 
         self.chat_display.pack(
             fill=tk.BOTH,
             expand=True,
-            padx=12,
-            pady=6,
+            padx=0,
+            pady=0,
         )
 
         self.chat_display.tag_configure(
             "user_name",
             foreground=self.ACCENT,
-            font=("Segoe UI", 11, "bold"),
+            font=("Consolas", 10, "bold"),
+            spacing1=6,
+            spacing3=4,
         )
 
         self.chat_display.tag_configure(
             "friday_name",
             foreground=self.FRIDAY_ACCENT,
-            font=("Segoe UI", 11, "bold"),
+            font=("Consolas", 10, "bold"),
+            spacing1=6,
+            spacing3=4,
         )
 
         self.chat_display.tag_configure(
             "message",
             foreground=self.TEXT,
-            spacing3=14,
+            lmargin1=10,
+            lmargin2=10,
+            spacing3=18,
         )
 
     def _build_input_panel(self) -> None:
         input_panel = tk.Frame(
             self.root,
             bg=self.PANEL,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
         )
 
         input_panel.pack(
             fill=tk.X,
-            padx=12,
+            padx=16,
             pady=(6, 8),
         )
 
@@ -957,8 +1071,11 @@ class FridayGUI:
             relief=tk.FLAT,
             borderwidth=0,
             font=("Segoe UI", 11),
-            padx=12,
-            pady=10,
+            padx=15,
+            pady=12,
+            highlightbackground=self.BORDER,
+            highlightcolor=self.ACCENT,
+            highlightthickness=1,
         )
 
         self.message_entry.pack(
@@ -987,7 +1104,7 @@ class FridayGUI:
 
         self.talk_button = tk.Button(
             button_panel,
-            text="Start Talking",
+            text="◉  VOICE LINK",
             command=self._toggle_recording,
             bg=self.BUTTON,
             fg=self.TEXT,
@@ -997,7 +1114,7 @@ class FridayGUI:
             relief=tk.FLAT,
             width=15,
             cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI Semibold", 9),
         )
 
         self.talk_button.pack(
@@ -1007,17 +1124,17 @@ class FridayGUI:
 
         self.send_button = tk.Button(
             button_panel,
-            text="Send",
+            text="TRANSMIT  ›",
             command=self._send_typed_message,
             bg=self.ACCENT,
             fg=self.BG,
-            activebackground="#8DDAFF",
+            activebackground=self.ACCENT_BRIGHT,
             activeforeground=self.BG,
             disabledforeground=self.MUTED,
             relief=tk.FLAT,
             width=15,
             cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI Semibold", 9),
         )
 
         self.send_button.pack(fill=tk.X)
@@ -1026,19 +1143,19 @@ class FridayGUI:
         status_bar = tk.Label(
             self.root,
             text=(
-                "Enter sends â€¢ Shift+Enter creates a new line â€¢ "
-                "Start Talking begins recording"
+                "SYSTEM READY   |   ENTER TO TRANSMIT   |   "
+                "SHIFT+ENTER FOR NEW LINE   |   VOICE LINK AVAILABLE"
             ),
             bg=self.BG,
             fg=self.MUTED,
             anchor=tk.W,
-            font=("Segoe UI", 9),
+            font=("Consolas", 8),
         )
 
         status_bar.pack(
             fill=tk.X,
-            padx=18,
-            pady=(0, 10),
+            padx=20,
+            pady=(2, 12),
         )
 
     def _make_button(
@@ -1057,8 +1174,11 @@ class FridayGUI:
             activeforeground=self.BG,
             relief=tk.FLAT,
             cursor="hand2",
-            font=("Segoe UI", 9, "bold"),
-            padx=10,
+            font=("Segoe UI Semibold", 9),
+            padx=12,
+            pady=4,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
         )
 
     def _handle_enter(self, event) -> str | None:
@@ -1270,7 +1390,7 @@ class FridayGUI:
             self.voice_service.start_recording()
 
             self.talk_button.configure(
-                text="Stop Recording",
+                text="STOP CAPTURE",
                 bg=self.RECORDING,
             )
 
@@ -1278,7 +1398,7 @@ class FridayGUI:
 
         except Exception as exc:
             self.talk_button.configure(
-                text="Start Talking",
+                text="◉  VOICE LINK",
                 bg=self.BUTTON,
             )
 
@@ -1289,7 +1409,7 @@ class FridayGUI:
 
     def _stop_recording(self) -> None:
         self.talk_button.configure(
-            text="Transcribing...",
+            text="DECODING...",
             state=tk.DISABLED,
             bg=self.BUTTON,
         )
@@ -1332,7 +1452,7 @@ class FridayGUI:
         transcript: str,
     ) -> None:
         self.talk_button.configure(
-            text="Start Talking",
+            text="◉  VOICE LINK",
             state=tk.NORMAL,
             bg=self.BUTTON,
         )
@@ -1361,7 +1481,7 @@ class FridayGUI:
         error: str,
     ) -> None:
         self.talk_button.configure(
-            text="Start Talking",
+            text="◉  VOICE LINK",
             state=tk.NORMAL,
             bg=self.BUTTON,
         )
