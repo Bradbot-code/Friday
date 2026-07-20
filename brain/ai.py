@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Any
 
 from openai import OpenAI
@@ -11,14 +10,6 @@ from config.settings import Settings
 from memory.conversation_manager import ConversationManager
 from memory.memory_manager import MemoryManager, MemoryProposal
 from tools.tool_manager import ToolExecutionResult, ToolManager
-
-
-@dataclass
-class PendingToolCall:
-    name: str
-    arguments: dict[str, Any]
-    call_id: str
-    input_items: list[Any]
 
 class FridayAI:
     def __init__(
@@ -32,7 +23,7 @@ class FridayAI:
         self.memory_manager = memory_manager
         self.conversation_manager = conversation_manager
         self.tool_manager = tool_manager
-        self.pending_tool_call: PendingToolCall | None = None
+        self.batch_actions_approved = False
 
         self.client = OpenAI(
             api_key=settings.openai_api_key,
@@ -54,9 +45,6 @@ class FridayAI:
 
         if not cleaned_message:
             return "You didn't give me anything to work with."
-
-        if self.pending_tool_call is not None:
-            return self._handle_pending_confirmation(cleaned_message)
 
         memory_context = self.memory_manager.retrieve_context(
             cleaned_message
@@ -131,23 +119,24 @@ class FridayAI:
 
             registered_tool = self.tool_manager.get_tool(tool_call.name)
 
-            if registered_tool.requires_confirmation:
-                self.pending_tool_call = PendingToolCall(
-                    name=tool_call.name,
-                    arguments=arguments,
-                    call_id=tool_call.call_id,
-                    input_items=input_items.copy(),
+            if (
+                registered_tool.requires_confirmation
+                and not self.batch_actions_approved
+            ):
+                result = ToolExecutionResult(
+                    success=False,
+                    tool_name=tool_call.name,
+                    message=(
+                        "This action was blocked because batch approval "
+                        "was not granted when Friday started."
+                    ),
                 )
-
-                return self._build_confirmation_prompt(
+            else:
+                result = self.tool_manager.execute(
                     tool_call.name,
                     arguments,
+                    confirmed=self.batch_actions_approved,
                 )
-
-            result = self.tool_manager.execute(
-                tool_call.name,
-                arguments,
-            )
             input_items.append(
                 self._tool_output(tool_call.call_id, result)
             )
@@ -156,48 +145,9 @@ class FridayAI:
             "Friday stopped after too many consecutive tool calls."
         )
 
-    def _handle_pending_confirmation(
-        self,
-        user_message: str,
-    ) -> str:
-        normalized = user_message.casefold().strip().rstrip(".!")
-        yes_answers = {"yes", "y", "confirm", "confirmed", "approve", "approved"}
-        no_answers = {"no", "n", "deny", "denied", "cancel", "decline"}
-
-        if normalized not in yes_answers | no_answers:
-            return (
-                "A tool action is waiting for confirmation. "
-                "Please answer yes to run it or no to decline it."
-            )
-
-        pending = self.pending_tool_call
-        self.pending_tool_call = None
-        approved = normalized in yes_answers
-
-        if approved:
-            result = self.tool_manager.execute(
-                pending.name,
-                pending.arguments,
-                confirmed=True,
-            )
-        else:
-            result = ToolExecutionResult(
-                success=False,
-                tool_name=pending.name,
-                message="The user declined this tool action.",
-            )
-
-        input_items = pending.input_items
-        input_items.append(
-            self._tool_output(pending.call_id, result)
-        )
-
-        try:
-            answer = self._run_tool_loop(input_items)
-            self._record_exchange(user_message, answer)
-            return answer
-        except Exception as exc:
-            return f"OpenAI request failed: {exc}"
+    def set_batch_actions_approved(self, approved: bool) -> None:
+        """Set startup approval for protected tools for this app session."""
+        self.batch_actions_approved = bool(approved)
 
     def _record_exchange(
         self,
@@ -231,23 +181,6 @@ class FridayAI:
             "call_id": call_id,
             "output": self.tool_manager.result_to_json(result),
         }
-
-    @staticmethod
-    def _build_confirmation_prompt(
-        tool_name: str,
-        arguments: dict[str, Any],
-    ) -> str:
-        formatted_arguments = json.dumps(
-            arguments,
-            indent=2,
-            ensure_ascii=False,
-        )
-        return (
-            "This action changes your Obsidian vault and requires confirmation.\n\n"
-            f"Tool: {tool_name}\n"
-            f"Arguments:\n{formatted_arguments}\n\n"
-            "Run this action? Please answer yes or no."
-        )
 
     def generate_session_summary(self) -> str:
         transcript = self.conversation_manager.get_transcript()
