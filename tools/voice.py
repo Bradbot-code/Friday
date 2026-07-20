@@ -58,9 +58,14 @@ class VoiceService:
             "gpt-4o-mini-tts",
         )
 
-        self.voice = os.getenv(
+        configured_voice = os.getenv(
             "FRIDAY_VOICE",
             "coral",
+        ).casefold().strip()
+        self.voice = (
+            configured_voice
+            if configured_voice in self.SUPPORTED_VOICES
+            else "coral"
         )
 
         self._stream: sd.InputStream | None = None
