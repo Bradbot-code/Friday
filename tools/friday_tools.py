@@ -5,6 +5,7 @@ from tools.calendar_tools import CalendarTools
 from tools.gmail_tools import GmailTools
 from tools.obsidian_tools import ObsidianTools
 from tools.tool_manager import ToolManager
+from tools.weather_tools import WeatherTools
 
 
 def build_tool_manager(
@@ -12,8 +13,14 @@ def build_tool_manager(
     gmail_tools: GmailTools,
     calendar_tools: CalendarTools,
     action_center: ActionCenter,
+    weather_tools: WeatherTools,
 ) -> ToolManager:
     manager = ToolManager()
+
+    manager.register("weather_search_locations", "Find matching weather locations by city or postal code.", weather_tools.search_locations, False)
+    manager.register("weather_save_location", "Save the user's default weather location after they explicitly request it.", weather_tools.save_location, True)
+    manager.register("weather_get_forecast", "Get current conditions and a daily forecast for the saved location.", weather_tools.get_forecast, False)
+    manager.register("weather_get_hourly_forecast", "Get the next 1 to 48 hours of weather for the saved location.", weather_tools.get_hourly_forecast, False)
 
     for name, description, function, protected in (
         ("calendar_list_events", "List primary-calendar events for a date range.", calendar_tools.list_events, False),
