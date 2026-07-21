@@ -12,6 +12,7 @@ from memory.memory_manager import MemoryManager
 from tools.voice import VoiceService
 from tools.gmail_tools import GmailTools
 from tools.action_center import ActionCenter
+from tools.weather_tools import WeatherTools
 
 
 class FridayGUI:
@@ -38,6 +39,7 @@ class FridayGUI:
         conversation_manager: ConversationManager,
         gmail_tools: GmailTools,
         action_center: ActionCenter,
+        weather_tools: WeatherTools,
     ) -> None:
         self.root = root
         self.friday = friday
@@ -46,6 +48,10 @@ class FridayGUI:
         self.conversation_manager = conversation_manager
         self.gmail_tools = gmail_tools
         self.action_center = action_center
+        self.weather_tools = weather_tools
+        saved_weather = self.weather_tools.get_saved_location() or {}
+        self.weather_location_text = tk.StringVar(master=self.root)
+        self.weather_status_text = tk.StringVar(master=self.root, value=saved_weather.get("display_name", "No location saved"))
         self.preference_store = PreferenceStore(
             Path("data/friday_preferences.json")
         )
@@ -519,6 +525,30 @@ class FridayGUI:
             wraplength=540,
             justify=tk.LEFT,
         ).grid(row=1, column=0, columnspan=2, padx=14, pady=(2, 12), sticky="w")
+
+        weather_panel = tk.Frame(parent, bg=self.PANEL_RAISED, highlightbackground=self.BORDER, highlightthickness=1)
+        weather_panel.grid(row=7, column=0, columnspan=4, padx=18, pady=(0, 18), sticky="ew")
+        weather_panel.columnconfigure(1, weight=1)
+        tk.Label(weather_panel, text="WEATHER LOCATION", bg=self.PANEL_RAISED, fg=self.ACCENT, font=("Consolas", 10, "bold")).grid(row=0, column=0, padx=14, pady=12)
+        tk.Entry(weather_panel, textvariable=self.weather_location_text, bg=self.INPUT_BG, fg=self.TEXT, insertbackground=self.TEXT, relief=tk.FLAT).grid(row=0, column=1, padx=8, pady=12, sticky="ew")
+        self._make_button(weather_panel, "Save Location", self._save_weather_location).grid(row=0, column=2, padx=14, pady=12)
+        tk.Label(weather_panel, textvariable=self.weather_status_text, bg=self.PANEL_RAISED, fg=self.MUTED, font=("Segoe UI", 9)).grid(row=1, column=0, columnspan=3, padx=14, pady=(0, 12), sticky="w")
+
+    def _save_weather_location(self) -> None:
+        query = self.weather_location_text.get().strip()
+        if not query:
+            messagebox.showinfo("Weather", "Enter a city or postal code.")
+            return
+        self.weather_status_text.set("Finding location...")
+        threading.Thread(target=self._save_weather_location_worker, args=(query,), daemon=True).start()
+
+    def _save_weather_location_worker(self, query: str) -> None:
+        try:
+            location = self.weather_tools.save_location(query)
+            self.root.after(0, lambda: self.weather_status_text.set(location["display_name"]))
+        except Exception as exc:
+            error = str(exc)
+            self.root.after(0, lambda: messagebox.showerror("Weather Location Error", error))
 
     def _build_diagnostics_tab(self, parent: tk.Frame) -> None:
         parent.columnconfigure(1, weight=1)
