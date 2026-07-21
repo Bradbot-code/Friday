@@ -12,13 +12,21 @@ from memory.obsidian import ObsidianVault
 from memory.semantic_search import SemanticMemorySearch
 from tools.voice import VoiceService
 from tools.friday_tools import build_tool_manager
+from tools.gmail_tools import GmailTools
 from tools.obsidian_tools import ObsidianTools
+from tools.action_center import ActionCenter
+from tools.calendar_tools import CalendarTools
+from tools.weather_tools import WeatherTools
 
 def build_friday() -> tuple[
     FridayAI,
     VoiceService,
     MemoryManager,
     ConversationManager,
+    GmailTools,
+    CalendarTools,
+    ActionCenter,
+    WeatherTools,
 ]:
     settings = load_settings()
 
@@ -34,8 +42,17 @@ def build_friday() -> tuple[
         vault_path=settings.obsidian_vault_path
     )
 
+    gmail_tools = GmailTools()
+    calendar_tools = CalendarTools(gmail_tools)
+    action_center = ActionCenter()
+    weather_tools = WeatherTools()
+
     tool_manager = build_tool_manager(
-        obsidian_tools=obsidian_tools
+        obsidian_tools=obsidian_tools,
+        gmail_tools=gmail_tools,
+        calendar_tools=calendar_tools,
+        action_center=action_center,
+        weather_tools=weather_tools,
     )
 
     semantic_search = SemanticMemorySearch(
@@ -71,6 +88,10 @@ def build_friday() -> tuple[
         voice_service,
         memory_manager,
         conversation_manager,
+        gmail_tools,
+        calendar_tools,
+        action_center,
+        weather_tools,
     )
 
 
@@ -81,6 +102,10 @@ def main() -> None:
             voice_service,
             memory_manager,
             conversation_manager,
+            gmail_tools,
+            calendar_tools,
+            action_center,
+            weather_tools,
         ) = build_friday()
 
     except Exception as exc:
@@ -95,6 +120,9 @@ def main() -> None:
         voice_service=voice_service,
         memory_manager=memory_manager,
         conversation_manager=conversation_manager,
+        gmail_tools=gmail_tools,
+        action_center=action_center,
+        weather_tools=weather_tools,
     )
 
     root.mainloop()

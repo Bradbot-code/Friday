@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from openai import OpenAI
 
@@ -8,8 +9,7 @@ from brain.prompts import build_system_prompt
 from config.settings import Settings
 from memory.conversation_manager import ConversationManager
 from memory.memory_manager import MemoryManager, MemoryProposal
-from tools import tool_manager
-from tools.tool_manager import ToolManager
+from tools.tool_manager import ToolExecutionResult, ToolManager
 
 class FridayAI:
     def __init__(
@@ -17,11 +17,13 @@ class FridayAI:
         settings: Settings,
         memory_manager: MemoryManager,
         conversation_manager: ConversationManager,
+        tool_manager: ToolManager,
     ) -> None:
         self.settings = settings
         self.memory_manager = memory_manager
         self.conversation_manager = conversation_manager
         self.tool_manager = tool_manager
+        self.batch_actions_approved = False
 
         self.client = OpenAI(
             api_key=settings.openai_api_key,
@@ -53,9 +55,8 @@ class FridayAI:
             memory_context=memory_context,
         )
 
-        api_conversation = self.conversation.copy()
-
-        api_conversation.append(
+        input_items: list[Any] = self.conversation.copy()
+        input_items.append(
             {
                 "role": "user",
                 "content": current_input,
@@ -63,44 +64,123 @@ class FridayAI:
         )
 
         try:
-            response = self.client.responses.create(
-                model=self.settings.openai_model,
-                instructions=self.system_prompt,
-                input=api_conversation,
-            )
-
-            answer = response.output_text.strip()
-
-            self.conversation.append(
-                {
-                    "role": "user",
-                    "content": cleaned_message,
-                }
-            )
-
-            self.conversation.append(
-                {
-                    "role": "assistant",
-                    "content": answer,
-                }
-            )
-
-            self.conversation_manager.add_message(
-                role="user",
-                content=cleaned_message,
-            )
-
-            self.conversation_manager.add_message(
-                role="assistant",
-                content=answer,
-            )
-
-            self._trim_conversation()
-
+            answer = self._run_tool_loop(input_items)
+            self._record_exchange(cleaned_message, answer)
             return answer
 
         except Exception as exc:
             return f"OpenAI request failed: {exc}"
+
+    def _run_tool_loop(
+        self,
+        input_items: list[Any],
+        max_rounds: int = 8,
+    ) -> str:
+        tools = self.tool_manager.get_openai_tools()
+
+        for _ in range(max_rounds):
+            response = self.client.responses.create(
+                model=self.settings.openai_model,
+                instructions=self.system_prompt,
+                input=input_items,
+                tools=tools,
+                parallel_tool_calls=False,
+            )
+
+            input_items.extend(response.output)
+            function_calls = [
+                item
+                for item in response.output
+                if item.type == "function_call"
+            ]
+
+            if not function_calls:
+                answer = response.output_text.strip()
+                return answer or "I completed the request but received no text response."
+
+            tool_call = function_calls[0]
+
+            try:
+                arguments = json.loads(tool_call.arguments)
+            except json.JSONDecodeError as exc:
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": tool_call.call_id,
+                        "output": json.dumps(
+                            {
+                                "success": False,
+                                "message": f"Invalid tool arguments: {exc}",
+                            }
+                        ),
+                    }
+                )
+                continue
+
+            registered_tool = self.tool_manager.get_tool(tool_call.name)
+
+            if (
+                registered_tool.requires_confirmation
+                and not self.batch_actions_approved
+            ):
+                result = ToolExecutionResult(
+                    success=False,
+                    tool_name=tool_call.name,
+                    message=(
+                        "This action was blocked because batch approval "
+                        "was not granted when Friday started."
+                    ),
+                )
+            else:
+                result = self.tool_manager.execute(
+                    tool_call.name,
+                    arguments,
+                    confirmed=self.batch_actions_approved,
+                )
+            input_items.append(
+                self._tool_output(tool_call.call_id, result)
+            )
+
+        raise RuntimeError(
+            "Friday stopped after too many consecutive tool calls."
+        )
+
+    def set_batch_actions_approved(self, approved: bool) -> None:
+        """Set startup approval for protected tools for this app session."""
+        self.batch_actions_approved = bool(approved)
+
+    def _record_exchange(
+        self,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        for role, content in (
+            ("user", user_message),
+            ("assistant", assistant_message),
+        ):
+            self.conversation.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+            self.conversation_manager.add_message(
+                role=role,
+                content=content,
+            )
+
+        self._trim_conversation()
+
+    def _tool_output(
+        self,
+        call_id: str,
+        result: ToolExecutionResult,
+    ) -> dict[str, str]:
+        return {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": self.tool_manager.result_to_json(result),
+        }
 
     def generate_session_summary(self) -> str:
         transcript = self.conversation_manager.get_transcript()

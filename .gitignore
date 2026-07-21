@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 .idea/
 data/
+config/google_credentials.json
+config/client_secret*.json
+token.json
