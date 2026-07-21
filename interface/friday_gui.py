@@ -11,6 +11,7 @@ from memory.conversation_manager import ConversationManager
 from memory.memory_manager import MemoryManager
 from tools.voice import VoiceService
 from tools.gmail_tools import GmailTools
+from tools.action_center import ActionCenter
 
 
 class FridayGUI:
@@ -36,6 +37,7 @@ class FridayGUI:
         memory_manager: MemoryManager,
         conversation_manager: ConversationManager,
         gmail_tools: GmailTools,
+        action_center: ActionCenter,
     ) -> None:
         self.root = root
         self.friday = friday
@@ -43,6 +45,7 @@ class FridayGUI:
         self.memory_manager = memory_manager
         self.conversation_manager = conversation_manager
         self.gmail_tools = gmail_tools
+        self.action_center = action_center
         self.preference_store = PreferenceStore(
             Path("data/friday_preferences.json")
         )
@@ -325,11 +328,14 @@ class FridayGUI:
 
         settings_tab = tk.Frame(notebook, bg=self.PANEL)
         diagnostics_tab = tk.Frame(notebook, bg=self.PANEL)
+        actions_tab = tk.Frame(notebook, bg=self.PANEL)
         notebook.add(settings_tab, text="Settings")
+        notebook.add(actions_tab, text="Action Center")
         notebook.add(diagnostics_tab, text="Diagnostics")
 
         self._build_settings_tab(settings_tab)
         self._build_diagnostics_tab(diagnostics_tab)
+        self._build_action_center_tab(actions_tab)
         self._refresh_audio_devices()
         self._refresh_diagnostics()
 
@@ -986,6 +992,57 @@ class FridayGUI:
         self.status_text.set("Gmail connected with send and manage access")
         self.voice_service.log_diagnostic("Gmail connected (send and manage)")
         self._refresh_diagnostics()
+
+    def _build_action_center_tab(self, parent: tk.Frame) -> None:
+        parent.rowconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
+        tk.Label(
+            parent, text="PENDING ACTIONS", bg=self.PANEL, fg=self.ACCENT,
+            font=("Consolas", 11, "bold"),
+        ).grid(row=0, column=0, padx=18, pady=(18, 8), sticky="w")
+        self.action_tree = ttk.Treeview(
+            parent,
+            columns=("title", "due", "source"),
+            show="headings",
+        )
+        for key, title, width in (
+            ("title", "Action", 430), ("due", "Due", 170), ("source", "Source", 100)
+        ):
+            self.action_tree.heading(key, text=title)
+            self.action_tree.column(key, width=width, anchor="w")
+        self.action_tree.grid(row=1, column=0, padx=18, pady=8, sticky="nsew")
+        controls = tk.Frame(parent, bg=self.PANEL)
+        controls.grid(row=2, column=0, padx=18, pady=(4, 18), sticky="w")
+        for text, command in (
+            ("Refresh", self._refresh_action_center),
+            ("Complete", lambda: self._update_selected_action("complete")),
+            ("Dismiss", lambda: self._update_selected_action("dismiss")),
+        ):
+            self._make_button(controls, text, command).pack(side=tk.LEFT, padx=(0, 8))
+        self._refresh_action_center()
+
+    def _refresh_action_center(self) -> None:
+        if not hasattr(self, "action_tree"):
+            return
+        for item in self.action_tree.get_children():
+            self.action_tree.delete(item)
+        for action in self.action_center.list_actions():
+            self.action_tree.insert(
+                "", tk.END, iid=str(action["id"]),
+                values=(action["title"], action["due_at"], action["source"]),
+            )
+
+    def _update_selected_action(self, operation: str) -> None:
+        selection = self.action_tree.selection()
+        if not selection:
+            messagebox.showinfo("Action Center", "Select an action first.")
+            return
+        action_id = int(selection[0])
+        if operation == "complete":
+            self.action_center.complete_action(action_id)
+        else:
+            self.action_center.dismiss_action(action_id)
+        self._refresh_action_center()
 
     def _gmail_connection_failed(self, error: str) -> None:
         self.gmail_status_text.set("Connection failed")
