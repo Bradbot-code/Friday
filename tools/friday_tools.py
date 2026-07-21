@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.action_center import ActionCenter
+from tools.calendar_tools import CalendarTools
 from tools.gmail_tools import GmailTools
 from tools.obsidian_tools import ObsidianTools
 from tools.tool_manager import ToolManager
@@ -8,8 +10,23 @@ from tools.tool_manager import ToolManager
 def build_tool_manager(
     obsidian_tools: ObsidianTools,
     gmail_tools: GmailTools,
+    calendar_tools: CalendarTools,
+    action_center: ActionCenter,
 ) -> ToolManager:
     manager = ToolManager()
+
+    for name, description, function, protected in (
+        ("calendar_list_events", "List primary-calendar events for a date range.", calendar_tools.list_events, False),
+        ("calendar_search_events", "Search upcoming calendar events by text.", calendar_tools.search_events, False),
+        ("calendar_create_event", "Create a primary-calendar event. Use ISO date-times with timezone offsets.", calendar_tools.create_event, True),
+        ("calendar_update_event", "Update an existing calendar event by event ID.", calendar_tools.update_event, True),
+        ("calendar_cancel_event", "Cancel a calendar event by event ID.", calendar_tools.cancel_event, True),
+        ("action_center_add", "Add a proposed or follow-up action to Friday's local Action Center.", action_center.add_action, True),
+        ("action_center_list", "List items in Friday's local Action Center.", action_center.list_actions, False),
+        ("action_center_complete", "Mark an Action Center item completed.", action_center.complete_action, True),
+        ("action_center_dismiss", "Dismiss an Action Center item.", action_center.dismiss_action, True),
+    ):
+        manager.register(name=name, description=description, function=function, requires_confirmation=protected)
 
     manager.register(
         name="gmail_search_emails",
@@ -226,3 +243,5 @@ def build_tool_manager(
     )
 
     return manager
+from tools.action_center import ActionCenter
+from tools.calendar_tools import CalendarTools
