@@ -14,6 +14,8 @@ from tools.voice import VoiceService
 from tools.friday_tools import build_tool_manager
 from tools.gmail_tools import GmailTools
 from tools.obsidian_tools import ObsidianTools
+from tools.action_center import ActionCenter
+from tools.calendar_tools import CalendarTools
 
 def build_friday() -> tuple[
     FridayAI,
@@ -21,6 +23,8 @@ def build_friday() -> tuple[
     MemoryManager,
     ConversationManager,
     GmailTools,
+    CalendarTools,
+    ActionCenter,
 ]:
     settings = load_settings()
 
@@ -37,10 +41,14 @@ def build_friday() -> tuple[
     )
 
     gmail_tools = GmailTools()
+    calendar_tools = CalendarTools(gmail_tools)
+    action_center = ActionCenter()
 
     tool_manager = build_tool_manager(
         obsidian_tools=obsidian_tools,
         gmail_tools=gmail_tools,
+        calendar_tools=calendar_tools,
+        action_center=action_center,
     )
 
     semantic_search = SemanticMemorySearch(
@@ -77,6 +85,8 @@ def build_friday() -> tuple[
         memory_manager,
         conversation_manager,
         gmail_tools,
+        calendar_tools,
+        action_center,
     )
 
 
@@ -88,6 +98,8 @@ def main() -> None:
             memory_manager,
             conversation_manager,
             gmail_tools,
+            calendar_tools,
+            action_center,
         ) = build_friday()
 
     except Exception as exc:
@@ -103,6 +115,7 @@ def main() -> None:
         memory_manager=memory_manager,
         conversation_manager=conversation_manager,
         gmail_tools=gmail_tools,
+        action_center=action_center,
     )
 
     root.mainloop()
