@@ -13,6 +13,8 @@ from typing import Any
 
 
 GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+GOOGLE_SCOPES = [GMAIL_MODIFY_SCOPE, CALENDAR_EVENTS_SCOPE]
 
 
 @dataclass(frozen=True)
@@ -50,11 +52,15 @@ class GmailTools:
             return GmailStatus(False, f"Reconnect required: {exc}")
 
     def connect(self) -> GmailStatus:
-        """Open Google's OAuth page and save a local Gmail token."""
+        """Open Google's OAuth page and save the shared Google token."""
         self._get_credentials(allow_browser=True)
         self._service = None
         self._get_service()
         return GmailStatus(True, "Connected (send and manage)")
+
+    def get_google_credentials(self):
+        """Return the shared Gmail and Calendar credentials."""
+        return self._get_credentials(allow_browser=False)
 
     def search_emails(
         self,
@@ -357,7 +363,7 @@ class GmailTools:
             ) from exc
 
         credentials = None
-        scopes = [GMAIL_MODIFY_SCOPE]
+        scopes = GOOGLE_SCOPES
         token_has_scope = self._token_has_required_scope()
         if self.token_path.exists() and token_has_scope:
             credentials = Credentials.from_authorized_user_file(
@@ -423,7 +429,7 @@ class GmailTools:
         granted = data.get("scopes", [])
         if isinstance(granted, str):
             granted = granted.split()
-        return GMAIL_MODIFY_SCOPE in granted
+        return all(scope in granted for scope in GOOGLE_SCOPES)
 
     def _get_service(self):
         if self._service is None:
