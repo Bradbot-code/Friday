@@ -7,7 +7,7 @@ import unittest
 from email import message_from_bytes
 from pathlib import Path
 
-from tools.gmail_tools import GMAIL_MODIFY_SCOPE, GmailTools
+from tools.gmail_tools import CALENDAR_EVENTS_SCOPE, GMAIL_MODIFY_SCOPE, GmailTools
 
 
 class _Request:
@@ -202,7 +202,9 @@ class GmailModificationTests(unittest.TestCase):
             )
             self.assertFalse(gmail._token_has_required_scope())
             token_path.write_text(
-                json.dumps({"scopes": [GMAIL_MODIFY_SCOPE]}),
+                json.dumps(
+                    {"scopes": [GMAIL_MODIFY_SCOPE, CALENDAR_EVENTS_SCOPE]}
+                ),
                 encoding="utf-8",
             )
             self.assertTrue(gmail._token_has_required_scope())
